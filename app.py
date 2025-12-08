@@ -13,13 +13,13 @@ def main():
     # --- 1. データの読み込み ---
     # Streamlitのキャッシュ機能を使って接続
     spreadsheet_url = "https://docs.google.com/spreadsheets/d/1WdRMiZ8RMrLHo5yFrVCSYrDlyC6IGWhvY9fcZiE9rQ0/edit"
-    
-    conn = st.connection("gsheets", type=GSheetsConnection, spreadsheet=spreadsheet_url)
 
-    # Configシート（設定）とResponsesシート（回答）を読み込む
-    # ttl=0 に設定して、リロードのたびに最新データを取得する（開発用、運用時は調整可）
-    df_config = conn.read(worksheet="Config", ttl=0)
-    df_responses = conn.read(worksheet="Responses", ttl=0)
+    # 1. 接続はシンプルに作る（ここではURLを渡さない！）
+    conn = st.connection("gsheets", type=GSheetsConnection)
+
+    # 2. 読むときに「このURLを読んでね」と指定する
+    df_config = conn.read(spreadsheet=spreadsheet_url, worksheet="Config", ttl=0)
+    df_responses = conn.read(spreadsheet=spreadsheet_url, worksheet="Responses", ttl=0)
 
     # --- 2. データの整形 ---
     # データフレームから辞書やリストへ変換して使いやすくする
