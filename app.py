@@ -12,7 +12,9 @@ def main():
 
     # --- 1. データの読み込み ---
     # Streamlitのキャッシュ機能を使って接続
-    conn = st.connection("gsheets", type=GSheetsConnection)
+    spreadsheet_url = "https://docs.google.com/spreadsheets/d/1WdRMiZ8RMrLHo5yFrVCSYrDlyC6IGWhvY9fcZiE9rQ0/edit"
+    
+    conn = st.connection("gsheets", type=GSheetsConnection, spreadsheet=spreadsheet_url)
 
     # Configシート（設定）とResponsesシート（回答）を読み込む
     # ttl=0 に設定して、リロードのたびに最新データを取得する（開発用、運用時は調整可）
