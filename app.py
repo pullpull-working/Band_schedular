@@ -26,12 +26,13 @@ def load_data(conn):
         
         return df_config, df_responses, df_members
     except Exception:
-        # シートがない場合などの安全策
         return pd.DataFrame(), pd.DataFrame(columns=["user_id", "slot_id", "status"]), pd.DataFrame()
 
 def save_data(conn, sheet_name, df):
     """データの保存"""
-    conn.update(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name, data=df)
+    # 【重要修正】エラー回避のため、NaN(欠損値)を空文字に変換してから保存する
+    df_clean = df.fillna("")
+    conn.update(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name, data=df_clean)
 
 def parse_schedule_text(text):
     """
@@ -45,7 +46,6 @@ def parse_schedule_text(text):
     current_date = None
     
     # 正規表現: 日付(12/13など)を抽出。曜日は任意。
-    # グループ1: 日付, グループ2: 時間以降
     date_pattern = re.compile(r'(\d{1,4}/\d{1,2}(?:/\d{1,2})?)(?:\(.*\))?\s*(.*)')
 
     for line in lines:
@@ -63,7 +63,7 @@ def parse_schedule_text(text):
                 candidates.append(f"{current_date} {time_part}")
         
         elif current_date:
-            # 日付がない行（時間のみとみなす）かつ、すでに日付が登場している場合
+            # 日付がない行（時間のみとみなす）
             candidates.append(f"{current_date} {line}")
         else:
             # 日付がなく、いきなり時間が書かれている場合はそのまま追加
@@ -74,7 +74,6 @@ def parse_schedule_text(text):
 def main():
     st.set_page_config(page_title="バンド日程調整", layout="wide", page_icon="🎸")
     
-    # CSSでスマホでも見やすく調整
     st.markdown("""
     <style>
         .stRadio > label {font-size: 1.2rem; font-weight:bold;}
@@ -100,7 +99,6 @@ def main():
         
         if password == ADMIN_PASSWORD:
             st.success("ログイン成功")
-            
             st.info("💡 メンバーの追加・編集・削除は、Googleスプレッドシートの **`Members`** シートを直接編集してください。")
             
             st.subheader("📅 日程枠の管理")
@@ -115,13 +113,12 @@ def main():
                 else:
                     st.info("日程が登録されていません")
             
-            # --- ★変更箇所: 一括入力フォーム ---
+            # --- 一括入力フォーム ---
             st.write("---")
             st.subheader("日程の一括追加")
             st.caption("調整さんのようにテキストボックスに入力してください。")
 
             with st.form("add_slot_bulk"):
-                # 入力例をプレースホルダーに設定
                 placeholder_text = """12/13(土) 10:00-11:00
 11:00-12:00
 12/14(日) 13:00-14:00"""
@@ -136,9 +133,7 @@ def main():
                         st.error("日程が入力されていません")
                     else:
                         new_rows = []
-                        # 一括でデータフレーム行を作成
                         for cand in candidates:
-                            # 一括追加時にIDが被らないようUUIDを使用
                             new_id = f"s_{uuid.uuid4().hex}"
                             new_row = {
                                 "type": "slot", 
@@ -149,11 +144,14 @@ def main():
                             }
                             new_rows.append(new_row)
                         
-                        # データ結合と保存
+                        # 結合処理
                         updated_df = pd.concat([df_config, pd.DataFrame(new_rows)], ignore_index=True)
+                        
+                        # 保存 (save_data内でfillnaされるので安全)
                         save_data(conn, "Config", updated_df)
                         
                         st.success(f"{len(new_rows)} 件の日程を追加しました！")
+                        st.cache_data.clear() # キャッシュクリア
                         st.rerun()
 
             # リセットボタン
@@ -173,7 +171,6 @@ def main():
             st.warning("メンバーが登録されていません。管理者はスプレッドシートの `Members` シートに入力してください。")
             return
 
-        # ユーザー辞書の作成
         df_members['user_id'] = df_members['user_id'].astype(str)
         df_members['password'] = df_members['password'].astype(str)
         
@@ -188,7 +185,6 @@ def main():
 
         # 認証ロジック
         current_user = user_map.get(selected_name)
-        
         input_pass_clean = str(input_pass).strip()
         stored_pass = str(current_user.get('password', '')).strip()
         if stored_pass.endswith('.0'):
@@ -197,14 +193,12 @@ def main():
         if current_user and input_pass_clean and stored_pass == input_pass_clean:
             st.success(f"ようこそ、{selected_name} さん！")
             
-            # 日程データの取得
             slots = []
             if not df_config.empty:
                 slots = df_config[df_config['type'] == 'slot'].to_dict('records')
 
             st.write("---") 
             
-            # 画面切り替えボタン
             mode = st.radio(
                 "モード選択", 
                 ["📝 予定を入れる", "🔍 バンドの予定を見る"], 
@@ -223,12 +217,11 @@ def main():
                     with st.form("schedule_form"):
                         input_data = []
                         for slot in slots:
-                            # 既存の回答を探す
                             prev = df_responses[
                                 (df_responses['user_id'] == current_user['user_id']) & 
                                 (df_responses['slot_id'] == slot['id'])
                             ]
-                            default_idx = 2 # ？
+                            default_idx = 2
                             if not prev.empty:
                                 try:
                                     default_idx = STATUS_OPTIONS.index(prev.iloc[0]['status'])
@@ -239,7 +232,6 @@ def main():
                         
                         if st.form_submit_button("保存する", type="primary"):
                             new_df = pd.DataFrame(input_data)
-                            # 自分以外のデータを残して保存
                             other_data = df_responses[df_responses['user_id'] != current_user['user_id']]
                             final_df = pd.concat([other_data, new_df], ignore_index=True)
                             save_data(conn, "Responses", final_df)
@@ -257,7 +249,6 @@ def main():
                     target_band = st.selectbox("確認したいバンドを選択", my_bands)
                     
                     if target_band:
-                        # Membersシートから同じバンドの人を検索
                         band_members = [
                             u for u in users 
                             if target_band in str(u.get('bands', '')).replace(" ", "").split(",")
@@ -265,7 +256,6 @@ def main():
                         
                         st.info(f"メンバー: {', '.join([u['name'] for u in band_members])}")
                         
-                        # 表の作成
                         view_rows = []
                         r_map = {}
                         for _, r in df_responses.iterrows():
