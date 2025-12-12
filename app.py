@@ -166,8 +166,24 @@ def main():
         # 認証ロジック
         current_user = user_map.get(selected_name)
         
-        if current_user and str(current_user['pass']) == str(input_pass):
+        # 画面に入力されたパスワードをきれいにする（空白削除）
+        input_pass_clean = str(input_pass).strip()
+
+        # スプレッドシートのパスワードをきれいにする
+        # 1. 文字列にする
+        # 2. ".0" がついていたら消す (1234.0 -> 1234)
+        # 3. 前後の空白を消す
+        stored_pass = str(current_user.get('pass', '')).strip()
+        if stored_pass.endswith('.0'):
+            stored_pass = stored_pass[:-2]
+
+        # デバッグ用: もしこれで直らなかったら、下の行の # を消して画面に表示させてみてください
+        # st.write(f"保存されているPW: '{stored_pass}' vs 入力したPW: '{input_pass_clean}'")
+
+        if current_user and stored_pass == input_pass_clean:
             st.success(f"ようこそ、{selected_name} さん！")
+            
+            # (以下、タブ表示のコードなどはそのまま...)
             
             # タブ: 入力 / 確認
             tab_in, tab_view = st.tabs(["📝 予定を入れる", "🔍 バンドの予定を見る"])
