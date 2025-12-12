@@ -183,27 +183,35 @@ def main():
         if current_user and stored_pass == input_pass_clean:
             st.success(f"ようこそ、{selected_name} さん！")
             
-            # (以下、タブ表示のコードなどはそのまま...)
+            # --- ▼▼▼ ここから貼り付け ▼▼▼ ---
             
-            # タブ: 入力 / 確認
-            tab_in, tab_view = st.tabs(["📝 予定を入れる", "🔍 バンドの予定を見る"])
-            
+            # 日程データの取得（共通）
             slots = df_config[df_config['type'] == 'slot'].to_dict('records')
+
+            st.write("---") 
             
-            # --- 入力タブ ---
-            with tab_in:
+            # 画面切り替えボタン（タブの代わり）
+            mode = st.radio(
+                "モード選択", 
+                ["📝 予定を入れる", "🔍 バンドの予定を見る"], 
+                horizontal=True,
+                label_visibility="collapsed"
+            )
+
+            # --- 入力画面 ---
+            if mode == "📝 予定を入れる":
+                st.subheader("📝 予定の入力")
                 st.write("以下の日程について、都合を選択して「保存」を押してください。")
+                
                 with st.form("schedule_form"):
                     input_data = []
                     for slot in slots:
                         # 既存の回答を探す
-                        key = (current_user['id'], slot['id'])
-                        # response_mapを作るのが重いので、簡易フィルタ
                         prev = df_responses[
                             (df_responses['user_id'] == current_user['id']) & 
                             (df_responses['slot_id'] == slot['id'])
                         ]
-                        default_idx = 2 #
+                        default_idx = 2 # ？
                         if not prev.empty:
                             try:
                                 default_idx = STATUS_OPTIONS.index(prev.iloc[0]['status'])
@@ -212,61 +220,61 @@ def main():
                         val = st.radio(f"**{slot['name']}**", STATUS_OPTIONS, index=default_idx, horizontal=True, key=slot['id'])
                         input_data.append({"user_id": current_user['id'], "slot_id": slot['id'], "status": val})
                     
-                    if st.form_submit_button("保存する"):
-                        # データ更新処理
+                    if st.form_submit_button("保存する", type="primary"):
                         new_df = pd.DataFrame(input_data)
-                        # 自分以外のデータを残す
                         other_data = df_responses[df_responses['user_id'] != current_user['id']]
                         final_df = pd.concat([other_data, new_df], ignore_index=True)
                         save_data(conn, "Responses", final_df)
                         st.toast("✅ 予定を保存しました！", icon="🎉")
                         st.rerun()
 
-            # --- 確認タブ ---
-            with tab_view:
-                st.write("所属しているバンドの状況を確認できます。")
+            # --- 確認画面 ---
+            elif mode == "🔍 バンドの予定を見る":
+                st.subheader("🔍 スケジュール確認")
                 
                 # 自分の所属バンドリストを取得
-                my_bands = str(current_user['extra']).replace(" ", "").split(",")
-                target_band = st.selectbox("確認したいバンド", my_bands)
-                
-                if target_band:
-                    # そのバンドに所属するメンバーIDを探す
-                    # (Configのextra列にバンド名が含まれているか検索)
-                    band_members = [
-                        u for u in users 
-                        if target_band in str(u['extra']).replace(" ", "").split(",")
-                    ]
+                my_bands_str = str(current_user.get('extra', '')).replace(" ", "")
+                if my_bands_str:
+                    my_bands = my_bands_str.split(",")
+                    target_band = st.selectbox("確認したいバンドを選択", my_bands)
                     
-                    st.markdown(f"### {target_band} のスケジュール")
-                    st.caption(f"メンバー: {', '.join([u['name'] for u in band_members])}")
-                    
-                    # 閲覧用データの作成
-                    view_rows = []
-                    # 最新の回答マップ再構築
-                    r_map = {}
-                    for _, r in df_responses.iterrows():
-                        r_map[(r['user_id'], r['slot_id'])] = r['status']
+                    if target_band:
+                        # メンバー検索
+                        band_members = [
+                            u for u in users 
+                            if target_band in str(u.get('extra', '')).replace(" ", "").split(",")
+                        ]
+                        
+                        st.info(f"メンバー: {', '.join([u['name'] for u in band_members])}")
+                        
+                        # 表の作成
+                        view_rows = []
+                        r_map = {}
+                        for _, r in df_responses.iterrows():
+                            r_map[(r['user_id'], r['slot_id'])] = r['status']
 
-                    for slot in slots:
-                        row_data = {"日程": slot['name']}
-                        all_ok = True
-                        has_ng = False
+                        for slot in slots:
+                            row_data = {"日程": slot['name']}
+                            all_ok = True
+                            has_ng = False
+                            
+                            for member in band_members:
+                                stt = r_map.get((member['id'], slot['id']), "？")
+                                row_data[member['name']] = stt
+                                if stt != "〇": all_ok = False
+                                if stt == "×": has_ng = True
+                            
+                            if has_ng: row_data["判定"] = "❌"
+                            elif all_ok: row_data["判定"] = "🎯"
+                            else: row_data["判定"] = "⚠️"
+                            
+                            view_rows.append(row_data)
                         
-                        for member in band_members:
-                            stt = r_map.get((member['id'], slot['id']), "？")
-                            row_data[member['name']] = stt
-                            if stt != "〇": all_ok = False
-                            if stt == "×": has_ng = True
-                        
-                        if has_ng: row_data["判定"] = "❌"
-                        elif all_ok: row_data["判定"] = "🎯"
-                        else: row_data["判定"] = "⚠️"
-                        
-                        view_rows.append(row_data)
-                    
-                    # 表示
-                    st.dataframe(pd.DataFrame(view_rows), hide_index=True, use_container_width=True)
+                        st.dataframe(pd.DataFrame(view_rows), hide_index=True, use_container_width=True)
+                else:
+                    st.warning("所属バンドが登録されていません。管理者に連絡してください。")
+
+            # --- ▲▲▲ ここまで貼り付け ▲▲▲ ---
 
         elif input_pass:
             st.error("パスワードが違います")
