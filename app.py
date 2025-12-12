@@ -28,32 +28,17 @@ def load_data(conn):
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 def save_data(conn, sheet_name, df):
-    """
-    データの保存（完全上書きモード）
-    既存のラッパー関数の挙動が怪しいため、直接gspreadの機能を使って
-    「クリア -> 全書き込み」を行います。
-    """
+    """データの保存"""
     try:
-        # 1. データを文字列化し、NaNを埋める
-        df_clean = df.fillna("").astype(str)
-        
-        # 2. DataFrameをリスト形式（ヘッダー付き）に変換
-        # gspreadはリストのリスト[[列1, 列2], [値1, 値2]...]を受け取ります
-        raw_data = [df_clean.columns.tolist()] + df_clean.values.tolist()
-        
-        # 3. 内部のgspreadクライアントを直接操作する
-        # conn.client は gspread.Client オブジェクトです
-        sh = conn.client.open_by_url(SPREADSHEET_URL)
-        ws = sh.worksheet(sheet_name)
-        
-        # 4. シートをクリアしてから書き込む（これが一番確実）
-        ws.clear()
-        ws.update(range_name="A1", values=raw_data)
+        # 1. NaN(空データ)を空文字に変換
+        df_clean = df.fillna("")
+        # 2. 全てのデータを文字列型に変換（エラー防止の要）
+        df_clean = df_clean.astype(str)
+        # 3. 標準の更新機能を使う
+        conn.update(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name, data=df_clean)
         
     except Exception as e:
-        st.error(f"データの保存中にエラーが発生しました: {e}")
-        # エラー詳細をコンソールにも出す
-        print(f"Save Error: {e}")
+        st.error(f"保存エラー: {e}")
 
 def parse_schedule_text(text):
     """テキスト解析"""
