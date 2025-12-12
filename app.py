@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 from streamlit_gsheets import GSheetsConnection
 from datetime import datetime
+import re
+import uuid
 
 # ==========================================
 # ▼ 設定エリア: Secretsから読み込む
@@ -19,7 +21,7 @@ def load_data(conn):
         df_config = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Config", ttl=5)
         # 2. 回答データ (Responsesシート)
         df_responses = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Responses", ttl=5)
-        # 3. メンバー名簿 (Membersシート) ★新規追加
+        # 3. メンバー名簿 (Membersシート)
         df_members = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Members", ttl=5)
         
         return df_config, df_responses, df_members
@@ -30,6 +32,44 @@ def load_data(conn):
 def save_data(conn, sheet_name, df):
     """データの保存"""
     conn.update(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name, data=df)
+
+def parse_schedule_text(text):
+    """
+    調整さん形式のテキストを解析して候補日程のリストを返す
+    """
+    if not text:
+        return []
+
+    lines = text.splitlines()
+    candidates = []
+    current_date = None
+    
+    # 正規表現: 日付(12/13など)を抽出。曜日は任意。
+    # グループ1: 日付, グループ2: 時間以降
+    date_pattern = re.compile(r'(\d{1,4}/\d{1,2}(?:/\d{1,2})?)(?:\(.*\))?\s*(.*)')
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+
+        match = date_pattern.match(line)
+        if match:
+            # 日付が見つかった行
+            current_date = match.group(1)
+            time_part = match.group(2).strip()
+            
+            if time_part:
+                candidates.append(f"{current_date} {time_part}")
+        
+        elif current_date:
+            # 日付がない行（時間のみとみなす）かつ、すでに日付が登場している場合
+            candidates.append(f"{current_date} {line}")
+        else:
+            # 日付がなく、いきなり時間が書かれている場合はそのまま追加
+            candidates.append(line)
+
+    return candidates
 
 def main():
     st.set_page_config(page_title="バンド日程調整", layout="wide", page_icon="🎸")
@@ -61,7 +101,6 @@ def main():
         if password == ADMIN_PASSWORD:
             st.success("ログイン成功")
             
-            # ★変更点: Excelアップロード機能を削除し、案内を表示
             st.info("💡 メンバーの追加・編集・削除は、Googleスプレッドシートの **`Members`** シートを直接編集してください。")
             
             st.subheader("📅 日程枠の管理")
@@ -76,25 +115,49 @@ def main():
                 else:
                     st.info("日程が登録されていません")
             
-            # 新規追加フォーム
-            with st.form("add_slot"):
-                col1, col2 = st.columns(2)
-                date_val = col1.date_input("日付")
-                time_val = col2.text_input("時間帯 (例: 18:00-21:00)")
-                submit_slot = st.form_submit_button("日程を追加する")
+            # --- ★変更箇所: 一括入力フォーム ---
+            st.write("---")
+            st.subheader("日程の一括追加")
+            st.caption("調整さんのようにテキストボックスに入力してください。")
+
+            with st.form("add_slot_bulk"):
+                # 入力例をプレースホルダーに設定
+                placeholder_text = """12/13(土) 10:00-11:00
+11:00-12:00
+12/14(日) 13:00-14:00"""
+                candidate_text = st.text_area("候補日程を入力", height=200, placeholder=placeholder_text)
+                
+                submit_slot = st.form_submit_button("日程を一括追加する")
                 
                 if submit_slot:
-                    new_label = f"{date_val.month}/{date_val.day}({date_val.strftime('%a')}) {time_val}"
-                    new_id = f"s_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                    candidates = parse_schedule_text(candidate_text)
                     
-                    # Configシートは「日程(slot)」専用として使う
-                    new_row = {"type": "slot", "id": new_id, "name": new_label, "extra": "", "pass": ""}
-                    updated_df = pd.concat([df_config, pd.DataFrame([new_row])], ignore_index=True)
-                    save_data(conn, "Config", updated_df)
-                    st.success(f"「{new_label}」を追加しました！")
-                    st.rerun()
+                    if not candidates:
+                        st.error("日程が入力されていません")
+                    else:
+                        new_rows = []
+                        # 一括でデータフレーム行を作成
+                        for cand in candidates:
+                            # 一括追加時にIDが被らないようUUIDを使用
+                            new_id = f"s_{uuid.uuid4().hex}"
+                            new_row = {
+                                "type": "slot", 
+                                "id": new_id, 
+                                "name": cand, 
+                                "extra": "", 
+                                "pass": ""
+                            }
+                            new_rows.append(new_row)
+                        
+                        # データ結合と保存
+                        updated_df = pd.concat([df_config, pd.DataFrame(new_rows)], ignore_index=True)
+                        save_data(conn, "Config", updated_df)
+                        
+                        st.success(f"{len(new_rows)} 件の日程を追加しました！")
+                        st.rerun()
 
             # リセットボタン
+            st.write("---")
             if st.button("全日程を削除してリセットする", type="primary"):
                 # slotタイプだけ削除
                 new_df = df_config[df_config['type'] != 'slot']
@@ -106,12 +169,11 @@ def main():
     # 👤 メンバーモード (GUI)
     # ==========================================
     else: # メンバー用
-        # ★変更点: Membersシートからデータを取得
         if df_members.empty:
             st.warning("メンバーが登録されていません。管理者はスプレッドシートの `Members` シートに入力してください。")
             return
 
-        # ユーザー辞書の作成 (型変換でエラーを防ぐ)
+        # ユーザー辞書の作成
         df_members['user_id'] = df_members['user_id'].astype(str)
         df_members['password'] = df_members['password'].astype(str)
         
@@ -127,9 +189,8 @@ def main():
         # 認証ロジック
         current_user = user_map.get(selected_name)
         
-        # パスワード処理 (.0対策)
         input_pass_clean = str(input_pass).strip()
-        stored_pass = str(current_user.get('password', '')).strip() # 列名が 'password' になりました
+        stored_pass = str(current_user.get('password', '')).strip()
         if stored_pass.endswith('.0'):
             stored_pass = stored_pass[:-2]
 
@@ -162,7 +223,7 @@ def main():
                     with st.form("schedule_form"):
                         input_data = []
                         for slot in slots:
-                            # 既存の回答を探す (user_id と slot_id で検索)
+                            # 既存の回答を探す
                             prev = df_responses[
                                 (df_responses['user_id'] == current_user['user_id']) & 
                                 (df_responses['slot_id'] == slot['id'])
@@ -189,7 +250,6 @@ def main():
             elif mode == "🔍 バンドの予定を見る":
                 st.subheader("🔍 スケジュール確認")
                 
-                # 所属バンドの取得 (列名は 'bands')
                 my_bands_str = str(current_user.get('bands', '')).replace(" ", "")
                 
                 if my_bands_str and my_bands_str != "nan":
@@ -209,7 +269,6 @@ def main():
                         view_rows = []
                         r_map = {}
                         for _, r in df_responses.iterrows():
-                            # IDの型を文字列に統一してキーにする
                             r_map[(str(r['user_id']), str(r['slot_id']))] = r['status']
 
                         for slot in slots:
@@ -218,7 +277,6 @@ def main():
                             has_ng = False
                             
                             for member in band_members:
-                                # マップから取得
                                 stt = r_map.get((str(member['user_id']), str(slot['id'])), "？")
                                 row_data[member['name']] = stt
                                 if stt != "〇": all_ok = False
@@ -230,7 +288,10 @@ def main():
                             
                             view_rows.append(row_data)
                         
-                        st.dataframe(pd.DataFrame(view_rows), hide_index=True, use_container_width=True)
+                        if view_rows:
+                            st.dataframe(pd.DataFrame(view_rows), hide_index=True, use_container_width=True)
+                        else:
+                            st.warning("日程データがありません")
                 else:
                     st.warning("所属バンドが登録されていません。")
 
