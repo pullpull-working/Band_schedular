@@ -84,7 +84,7 @@ def main():
     </style>
     """, unsafe_allow_html=True)
 
-    st.title("🎸 バンド練習日程調整")
+    st.title("日調用アプリケーション")
 
     # 接続
     conn = st.connection("gsheets", type=GSheetsConnection)
@@ -101,10 +101,9 @@ def main():
         
         if password == ADMIN_PASSWORD:
             st.success("ログイン成功")
-            st.info("💡 メンバーの追加・編集は `Members` シートで行ってください。")
             
             # --- 現在の日程一覧 ---
-            st.subheader("📅 日程枠の管理")
+            st.subheader("日程枠の管理")
             
             # データフレームの列名を強制的に修正（これが重要！）
             # スプレッドシートのヘッダーが壊れていても読み込めるようにする
