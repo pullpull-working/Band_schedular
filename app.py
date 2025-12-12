@@ -28,16 +28,32 @@ def load_data(conn):
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 def save_data(conn, sheet_name, df):
-    """データの保存"""
+    """
+    データの保存（完全上書きモード）
+    既存のラッパー関数の挙動が怪しいため、直接gspreadの機能を使って
+    「クリア -> 全書き込み」を行います。
+    """
     try:
-        # 1. NaNを空文字に
-        df_clean = df.fillna("")
-        # 2. 全て文字列型にする
-        df_clean = df_clean.astype(str)
-        # 3. 更新
-        conn.update(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name, data=df_clean)
+        # 1. データを文字列化し、NaNを埋める
+        df_clean = df.fillna("").astype(str)
+        
+        # 2. DataFrameをリスト形式（ヘッダー付き）に変換
+        # gspreadはリストのリスト[[列1, 列2], [値1, 値2]...]を受け取ります
+        raw_data = [df_clean.columns.tolist()] + df_clean.values.tolist()
+        
+        # 3. 内部のgspreadクライアントを直接操作する
+        # conn.client は gspread.Client オブジェクトです
+        sh = conn.client.open_by_url(SPREADSHEET_URL)
+        ws = sh.worksheet(sheet_name)
+        
+        # 4. シートをクリアしてから書き込む（これが一番確実）
+        ws.clear()
+        ws.update(range_name="A1", values=raw_data)
+        
     except Exception as e:
-        st.error(f"保存エラー: {e}")
+        st.error(f"データの保存中にエラーが発生しました: {e}")
+        # エラー詳細をコンソールにも出す
+        print(f"Save Error: {e}")
 
 def parse_schedule_text(text):
     """テキスト解析"""
@@ -164,8 +180,7 @@ def main():
                         }
                         new_rows.append(new_row)
                     
-                    # 1. ベースとなるデータフレームを用意
-                    # (列名が壊れていても、ここで正しい列名のDFを作り直す)
+                    # 1. ベースデータ作成
                     if set(EXPECTED_COLS).issubset(df_config.columns):
                         base_df = df_config[EXPECTED_COLS].copy()
                     else:
@@ -175,11 +190,20 @@ def main():
                     new_df = pd.DataFrame(new_rows)
                     final_df = pd.concat([base_df, new_df], ignore_index=True)
                     
-                    # 3. 保存
+                    # --- デバッグ表示（確認用） ---
+                    st.write("▼ 保存直前のデータ（これが増えていればPython側は正常です）")
+                    st.dataframe(final_df.tail(5)) # 末尾5件を表示
+                    # -------------------------
+
+                    # 3. 保存 (新しい強力なsave_dataを使用)
                     save_data(conn, "Config", final_df)
                     
                     st.success(f"{len(new_rows)} 件を追加しました！")
                     st.cache_data.clear()
+                    
+                    # リラン前に少し待つ（Google側の反映待ち）
+                    import time
+                    time.sleep(1) 
                     st.rerun()
 
             # リセットボタン
