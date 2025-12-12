@@ -190,7 +190,7 @@ def main():
                             (df_responses['user_id'] == current_user['id']) & 
                             (df_responses['slot_id'] == slot['id'])
                         ]
-                        default_idx = 2 # ？
+                        default_idx = 2 #
                         if not prev.empty:
                             try:
                                 default_idx = STATUS_OPTIONS.index(prev.iloc[0]['status'])
