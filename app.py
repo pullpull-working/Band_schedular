@@ -24,7 +24,8 @@ def load_data(conn):
         # 3. メンバー名簿 (Membersシート)
         df_members = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Members", ttl=5)
         
-        return df_config, df_responses, df_members
+        # 【重要修正】キャッシュ書き換え警告を防ぐため、必ず .copy() をしてコピーを渡す
+        return df_config.copy(), df_responses.copy(), df_members.copy()
     except Exception:
         return pd.DataFrame(), pd.DataFrame(columns=["user_id", "slot_id", "status"]), pd.DataFrame()
 
@@ -105,7 +106,7 @@ def main():
             
             # 現在のスロットを取得
             current_slots = []
-            if not df_config.empty:
+            if not df_config.empty and 'type' in df_config.columns:
                 current_slots = df_config[df_config['type'] == 'slot'].to_dict('records')
                 if current_slots:
                     st.write("▼ 現在登録中の日程:")
@@ -126,42 +127,58 @@ def main():
                 
                 submit_slot = st.form_submit_button("日程を一括追加する")
                 
-                if submit_slot:
-                    candidates = parse_schedule_text(candidate_text)
+            # インデント修正: if文を formの外、かつ if password... ブロックの中に配置
+            if submit_slot:
+                candidates = parse_schedule_text(candidate_text)
+                
+                if not candidates:
+                    st.error("日程が入力されていません")
+                else:
+                    new_rows = []
+                    for cand in candidates:
+                        new_id = f"s_{uuid.uuid4().hex}"
+                        new_row = {
+                            "type": "slot", 
+                            "id": new_id, 
+                            "name": cand, 
+                            "extra": "", 
+                            "pass": ""
+                        }
+                        new_rows.append(new_row)
                     
-                    if not candidates:
-                        st.error("日程が入力されていません")
-                    else:
-                        new_rows = []
-                        for cand in candidates:
-                            new_id = f"s_{uuid.uuid4().hex}"
-                            new_row = {
-                                "type": "slot", 
-                                "id": new_id, 
-                                "name": cand, 
-                                "extra": "", 
-                                "pass": ""
-                            }
-                            new_rows.append(new_row)
-                        
-                        # 結合処理
-                        updated_df = pd.concat([df_config, pd.DataFrame(new_rows)], ignore_index=True)
-                        
-                        # 保存 (save_data内でfillnaされるので安全)
-                        save_data(conn, "Config", updated_df)
-                        
-                        st.success(f"{len(new_rows)} 件の日程を追加しました！")
-                        st.cache_data.clear() # キャッシュクリア
-                        st.rerun()
+                    # 1. 必要な列を定義
+                    expected_cols = ["type", "id", "name", "extra", "pass"]
+                    
+                    # 2. 既存データ(df_config)に必要な列がない場合、列を追加しておく
+                    for col in expected_cols:
+                        if col not in df_config.columns:
+                            df_config[col] = ""
+                            
+                    # 3. 結合処理
+                    new_df_rows = pd.DataFrame(new_rows)
+                    updated_df = pd.concat([df_config, new_df_rows], ignore_index=True)
+                    
+                    # 4. 必要な列だけに絞り込む
+                    updated_df = updated_df[expected_cols]
+                    
+                    # 5. 保存
+                    save_data(conn, "Config", updated_df)
+                    
+                    st.success(f"{len(new_rows)} 件の日程を追加しました！")
+                    st.cache_data.clear() # キャッシュクリア
+                    st.rerun()
 
             # リセットボタン
             st.write("---")
             if st.button("全日程を削除してリセットする", type="primary"):
-                # slotタイプだけ削除
-                new_df = df_config[df_config['type'] != 'slot']
-                save_data(conn, "Config", new_df)
-                st.warning("日程を全て削除しました")
-                st.rerun()
+                if not df_config.empty and 'type' in df_config.columns:
+                    # slotタイプだけ削除
+                    new_df = df_config[df_config['type'] != 'slot']
+                    save_data(conn, "Config", new_df)
+                    st.warning("日程を全て削除しました")
+                    st.rerun()
+                else:
+                    st.warning("削除するデータがありません")
 
     # ==========================================
     # 👤 メンバーモード (GUI)
@@ -169,126 +186,148 @@ def main():
     else: # メンバー用
         if df_members.empty:
             st.warning("メンバーが登録されていません。管理者はスプレッドシートの `Members` シートに入力してください。")
-            return
-
-        df_members['user_id'] = df_members['user_id'].astype(str)
-        df_members['password'] = df_members['password'].astype(str)
-        
-        users = df_members.to_dict('records')
-        user_map = {u['name']: u for u in users}
-        
-        # ログイン画面
-        st.subheader("ログイン")
-        col1, col2 = st.columns([2, 1])
-        selected_name = col1.selectbox("名前を選んでください", options=list(user_map.keys()))
-        input_pass = col2.text_input("パスワード(数字)", type="password")
-
-        # 認証ロジック
-        current_user = user_map.get(selected_name)
-        input_pass_clean = str(input_pass).strip()
-        stored_pass = str(current_user.get('password', '')).strip()
-        if stored_pass.endswith('.0'):
-            stored_pass = stored_pass[:-2]
-
-        if current_user and input_pass_clean and stored_pass == input_pass_clean:
-            st.success(f"ようこそ、{selected_name} さん！")
             
-            slots = []
-            if not df_config.empty:
-                slots = df_config[df_config['type'] == 'slot'].to_dict('records')
-
-            st.write("---") 
-            
-            mode = st.radio(
-                "モード選択", 
-                ["📝 予定を入れる", "🔍 バンドの予定を見る"], 
-                horizontal=True,
-                label_visibility="collapsed"
-            )
-
-            # --- 入力画面 ---
-            if mode == "📝 予定を入れる":
-                st.subheader("📝 予定の入力")
-                
-                if not slots:
-                    st.info("現在、調整中の日程はありません。")
-                else:
-                    st.write("以下の日程について、都合を選択して「保存」を押してください。")
-                    with st.form("schedule_form"):
-                        input_data = []
-                        for slot in slots:
-                            prev = df_responses[
-                                (df_responses['user_id'] == current_user['user_id']) & 
-                                (df_responses['slot_id'] == slot['id'])
-                            ]
-                            default_idx = 2
-                            if not prev.empty:
-                                try:
-                                    default_idx = STATUS_OPTIONS.index(prev.iloc[0]['status'])
-                                except: pass
-                            
-                            val = st.radio(f"**{slot['name']}**", STATUS_OPTIONS, index=default_idx, horizontal=True, key=slot['id'])
-                            input_data.append({"user_id": current_user['user_id'], "slot_id": slot['id'], "status": val})
-                        
-                        if st.form_submit_button("保存する", type="primary"):
-                            new_df = pd.DataFrame(input_data)
-                            other_data = df_responses[df_responses['user_id'] != current_user['user_id']]
-                            final_df = pd.concat([other_data, new_df], ignore_index=True)
-                            save_data(conn, "Responses", final_df)
-                            st.toast("✅ 予定を保存しました！", icon="🎉")
-                            st.rerun()
-
-            # --- 確認画面 ---
-            elif mode == "🔍 バンドの予定を見る":
-                st.subheader("🔍 スケジュール確認")
-                
-                my_bands_str = str(current_user.get('bands', '')).replace(" ", "")
-                
-                if my_bands_str and my_bands_str != "nan":
-                    my_bands = my_bands_str.split(",")
-                    target_band = st.selectbox("確認したいバンドを選択", my_bands)
-                    
-                    if target_band:
-                        band_members = [
-                            u for u in users 
-                            if target_band in str(u.get('bands', '')).replace(" ", "").split(",")
-                        ]
-                        
-                        st.info(f"メンバー: {', '.join([u['name'] for u in band_members])}")
-                        
-                        view_rows = []
-                        r_map = {}
-                        for _, r in df_responses.iterrows():
-                            r_map[(str(r['user_id']), str(r['slot_id']))] = r['status']
-
-                        for slot in slots:
-                            row_data = {"日程": slot['name']}
-                            all_ok = True
-                            has_ng = False
-                            
-                            for member in band_members:
-                                stt = r_map.get((str(member['user_id']), str(slot['id'])), "？")
-                                row_data[member['name']] = stt
-                                if stt != "〇": all_ok = False
-                                if stt == "×": has_ng = True
-                            
-                            if has_ng: row_data["判定"] = "✕"
-                            elif all_ok: row_data["判定"] = "◎"
-                            else: row_data["判定"] = "△"
-                            
-                            view_rows.append(row_data)
-                        
-                        if view_rows:
-                            st.dataframe(pd.DataFrame(view_rows), hide_index=True, use_container_width=True)
-                        else:
-                            st.warning("日程データがありません")
-                else:
-                    st.warning("所属バンドが登録されていません。")
-
-        elif input_pass:
-            st.error("パスワードが違います")
         else:
-            st.info("パスワードを入力してください")
+            # データ型の変換前にコピーされているので安全
+            if 'user_id' in df_members.columns:
+                df_members['user_id'] = df_members['user_id'].astype(str)
+            else:
+                 df_members['user_id'] = ""
+
+            if 'password' in df_members.columns:
+                df_members['password'] = df_members['password'].astype(str)
+            else:
+                 df_members['password'] = ""
+            
+            users = df_members.to_dict('records')
+            user_map = {u['name']: u for u in users if 'name' in u}
+            
+            # ログイン画面
+            st.subheader("ログイン")
+            col1, col2 = st.columns([2, 1])
+            
+            if not user_map:
+                st.error("メンバー名簿の形式が正しくありません(name列が必要です)")
+            else:
+                selected_name = col1.selectbox("名前を選んでください", options=list(user_map.keys()))
+                input_pass = col2.text_input("パスワード(数字)", type="password")
+
+                # 認証ロジック
+                current_user = user_map.get(selected_name)
+                input_pass_clean = str(input_pass).strip()
+                stored_pass = str(current_user.get('password', '')).strip()
+                if stored_pass.endswith('.0'):
+                    stored_pass = stored_pass[:-2]
+
+                if current_user and input_pass_clean and stored_pass == input_pass_clean:
+                    st.success(f"ようこそ、{selected_name} さん！")
+                    
+                    slots = []
+                    if not df_config.empty and 'type' in df_config.columns:
+                        slots = df_config[df_config['type'] == 'slot'].to_dict('records')
+
+                    st.write("---") 
+                    
+                    mode = st.radio(
+                        "モード選択", 
+                        ["📝 予定を入れる", "🔍 バンドの予定を見る"], 
+                        horizontal=True,
+                        label_visibility="collapsed"
+                    )
+
+                    # --- 入力画面 ---
+                    if mode == "📝 予定を入れる":
+                        st.subheader("📝 予定の入力")
+                        
+                        if not slots:
+                            st.info("現在、調整中の日程はありません。")
+                        else:
+                            st.write("以下の日程について、都合を選択して「保存」を押してください。")
+                            with st.form("schedule_form"):
+                                input_data = []
+                                for slot in slots:
+                                    # 既存の回答を探す
+                                    prev = pd.DataFrame()
+                                    if not df_responses.empty and 'user_id' in df_responses.columns:
+                                        prev = df_responses[
+                                            (df_responses['user_id'] == current_user['user_id']) & 
+                                            (df_responses['slot_id'] == slot['id'])
+                                        ]
+                                    
+                                    default_idx = 2
+                                    if not prev.empty:
+                                        try:
+                                            default_idx = STATUS_OPTIONS.index(prev.iloc[0]['status'])
+                                        except: pass
+                                    
+                                    val = st.radio(f"**{slot['name']}**", STATUS_OPTIONS, index=default_idx, horizontal=True, key=slot['id'])
+                                    input_data.append({"user_id": current_user['user_id'], "slot_id": slot['id'], "status": val})
+                                
+                                if st.form_submit_button("保存する", type="primary"):
+                                    new_df = pd.DataFrame(input_data)
+                                    
+                                    # 自分以外のデータを残して保存
+                                    other_data = pd.DataFrame()
+                                    if not df_responses.empty and 'user_id' in df_responses.columns:
+                                        other_data = df_responses[df_responses['user_id'] != current_user['user_id']]
+                                        
+                                    final_df = pd.concat([other_data, new_df], ignore_index=True)
+                                    save_data(conn, "Responses", final_df)
+                                    st.toast("✅ 予定を保存しました！", icon="🎉")
+                                    st.rerun()
+
+                    # --- 確認画面 ---
+                    elif mode == "🔍 バンドの予定を見る":
+                        st.subheader("🔍 スケジュール確認")
+                        
+                        my_bands_str = str(current_user.get('bands', '')).replace(" ", "")
+                        
+                        if my_bands_str and my_bands_str != "nan":
+                            my_bands = my_bands_str.split(",")
+                            target_band = st.selectbox("確認したいバンドを選択", my_bands)
+                            
+                            if target_band:
+                                band_members = [
+                                    u for u in users 
+                                    if target_band in str(u.get('bands', '')).replace(" ", "").split(",")
+                                ]
+                                
+                                st.info(f"メンバー: {', '.join([u['name'] for u in band_members])}")
+                                
+                                view_rows = []
+                                r_map = {}
+                                if not df_responses.empty:
+                                    for _, r in df_responses.iterrows():
+                                        r_map[(str(r.get('user_id', '')), str(r.get('slot_id', '')))] = r.get('status', '？')
+
+                                for slot in slots:
+                                    row_data = {"日程": slot['name']}
+                                    all_ok = True
+                                    has_ng = False
+                                    
+                                    for member in band_members:
+                                        stt = r_map.get((str(member['user_id']), str(slot['id'])), "？")
+                                        row_data[member['name']] = stt
+                                        if stt != "〇": all_ok = False
+                                        if stt == "×": has_ng = True
+                                    
+                                    if has_ng: row_data["判定"] = "✕"
+                                    elif all_ok: row_data["判定"] = "◎"
+                                    else: row_data["判定"] = "△"
+                                    
+                                    view_rows.append(row_data)
+                                
+                                if view_rows:
+                                    st.dataframe(pd.DataFrame(view_rows), hide_index=True, use_container_width=True)
+                                else:
+                                    st.warning("日程データがありません")
+                        else:
+                            st.warning("所属バンドが登録されていません。")
+
+                elif input_pass:
+                    st.error("パスワードが違います")
+                else:
+                    st.info("パスワードを入力してください")
 
 if __name__ == "__main__":
     main()
