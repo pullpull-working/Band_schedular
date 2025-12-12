@@ -28,17 +28,20 @@ def load_data(conn):
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 def save_data(conn, sheet_name, df):
-    """データの保存"""
+    """データの保存（戻り値あり版）"""
     try:
-        # 1. NaN(空データ)を空文字に変換
+        # 1. NaNを空文字に
         df_clean = df.fillna("")
-        # 2. 全てのデータを文字列型に変換（エラー防止の要）
+        # 2. 全て文字列型にする
         df_clean = df_clean.astype(str)
-        # 3. 標準の更新機能を使う
+        # 3. 更新
         conn.update(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name, data=df_clean)
+        return True  # 【追加】成功したらTrueを返す
         
     except Exception as e:
+        # ここでエラーを表示（st.errorは消えないようにする）
         st.error(f"保存エラー: {e}")
+        return False # 【追加】失敗したらFalseを返す
 
 def parse_schedule_text(text):
     """テキスト解析"""
@@ -174,6 +177,18 @@ def main():
                     # 2. 結合
                     new_df = pd.DataFrame(new_rows)
                     final_df = pd.concat([base_df, new_df], ignore_index=True)
+
+                    # 3. 保存処理の呼び出し方を変更
+                    if save_data(conn, "Config", final_df):
+                        # 成功したときだけ実行されるブロック
+                        st.success(f"{len(new_rows)} 件を追加しました！")
+                        st.cache_data.clear()
+                        
+                        # 成功メッセージを読む時間を少し与える（2秒待機）
+                        import time
+                        time.sleep(2)
+                        
+                        st.rerun()
                     
                     # --- デバッグ表示（確認用） ---
                     st.write("▼ 保存直前のデータ（これが増えていればPython側は正常です）")
