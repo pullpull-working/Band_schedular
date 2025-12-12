@@ -108,7 +108,7 @@ def parse_schedule_text(text):
     return candidates
 
 def main():
-    st.set_page_config(page_title="バンド日程調整", layout="wide", page_icon="🎸")
+    st.set_page_config(page_title="日調アプリ", layout="wide")
     
     # CSS
     st.markdown("""
