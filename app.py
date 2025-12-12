@@ -3,6 +3,7 @@ import pandas as pd
 from streamlit_gsheets import GSheetsConnection
 import re
 import uuid
+import time # 待機時間制御のために必要
 
 # ==========================================
 # ▼ 設定エリア
@@ -14,34 +15,77 @@ STATUS_OPTIONS = ["〇", "△", "？", "×"]
 # 期待する列定義（ここを固定してズレを防ぐ）
 EXPECTED_COLS = ["type", "id", "name", "extra", "pass"]
 
+def clean_numeric_str(val):
+    """
+    数値として読み込まれてしまったIDやパスワードを綺麗な文字列にする
+    例: 1234.0 -> "1234", "001" -> "001"
+    """
+    s = str(val).strip()
+    if s == "nan" or s == "None":
+        return ""
+    # ".0" で終わる場合は削除（スプシの仕様対策）
+    if s.endswith(".0"):
+        return s[:-2]
+    return s
+
 def load_data(conn):
-    """データの読み込み"""
+    """データの読み込みと初期クリーニング"""
     try:
         # キャッシュを使わずに毎回最新を取得 (ttl=0)
         df_config = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Config", ttl=0)
         df_responses = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Responses", ttl=0)
         df_members = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Members", ttl=0)
         
-        # コピーして安全に渡す
+        # --- データクリーニング (Excel/数値の変換ブレ対策) ---
+        # ここで一括して綺麗な文字列型にしておくことで、後のロジックを単純化する
+        
+        # 1. Config
+        if not df_config.empty:
+            # 全て文字列化
+            df_config = df_config.fillna("").astype(str)
+            
+        # 2. Responses
+        if not df_responses.empty:
+            for col in ['user_id', 'slot_id']:
+                if col in df_responses.columns:
+                    df_responses[col] = df_responses[col].apply(clean_numeric_str)
+                    
+        # 3. Members
+        if not df_members.empty:
+            for col in ['user_id', 'password', 'name', 'bands']:
+                if col in df_members.columns:
+                    df_members[col] = df_members[col].apply(clean_numeric_str)
+
         return df_config.copy(), df_responses.copy(), df_members.copy()
     except Exception:
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 def save_data(conn, sheet_name, df):
-    """データの保存（戻り値あり版）"""
+    """
+    データの保存（ロバストモード）
+    標準のconn.updateではなく、クリア→書き込みを行うことで
+    列ズレやゴミデータの残留を防ぐ
+    """
     try:
-        # 1. NaNを空文字に
-        df_clean = df.fillna("")
-        # 2. 全て文字列型にする
-        df_clean = df_clean.astype(str)
-        # 3. 更新
-        conn.update(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name, data=df_clean)
-        return True  # 【追加】成功したらTrueを返す
+        # 1. データを文字列化し、NaNを埋める
+        df_clean = df.fillna("").astype(str)
+        
+        # 2. DataFrameをリスト形式（ヘッダー付き）に変換
+        raw_data = [df_clean.columns.tolist()] + df_clean.values.tolist()
+        
+        # 3. 内部クライアントで直接操作
+        sh = conn.client.open_by_url(SPREADSHEET_URL)
+        ws = sh.worksheet(sheet_name)
+        
+        # 4. クリアして書き込み（これが一番バグらない）
+        ws.clear()
+        ws.update(range_name="A1", values=raw_data)
+        
+        return True 
         
     except Exception as e:
-        # ここでエラーを表示（st.errorは消えないようにする）
         st.error(f"保存エラー: {e}")
-        return False # 【追加】失敗したらFalseを返す
+        return False
 
 def parse_schedule_text(text):
     """テキスト解析"""
@@ -105,22 +149,26 @@ def main():
             # --- 現在の日程一覧 ---
             st.subheader("日程枠の管理")
             
-            # データフレームの列名を強制的に修正（これが重要！）
-            # スプレッドシートのヘッダーが壊れていても読み込めるようにする
+            # 列名の整合性チェックと補正
             current_slots = []
             
-            # もし列名が足りなければ強制的にリセットして扱う
-            if df_config.empty or not set(EXPECTED_COLS).issubset(df_config.columns):
-                # 列名がおかしい場合は、既存データを無理やりEXPECTED_COLSに合わせるか、
-                # 空として扱う（安全策）
-                if not df_config.empty and len(df_config.columns) >= 5:
-                     # 列名だけすげ替える（データ救済）
-                     df_config.columns = EXPECTED_COLS + list(df_config.columns)[5:]
+            if df_config.empty:
+                 # データが無い場合は正しい列定義で空作成
+                 df_config = pd.DataFrame(columns=EXPECTED_COLS)
             
-            # 再度チェック
+            # 必須列が含まれているか確認
+            if not set(EXPECTED_COLS).issubset(df_config.columns):
+                # 列数が足りているなら、強制的にヘッダーを付け替える（データ救済）
+                if len(df_config.columns) >= len(EXPECTED_COLS):
+                      current_cols = list(df_config.columns)
+                      # 先頭5列を期待する列名に強制変更
+                      new_cols = EXPECTED_COLS + current_cols[len(EXPECTED_COLS):]
+                      df_config.columns = new_cols
+            
+            # 抽出
             if set(EXPECTED_COLS).issubset(df_config.columns):
-                # 文字列にして空白除去してからフィルタ
-                mask = df_config['type'].astype(str).str.strip() == 'slot'
+                # データクリーニング済みなので、そのまま比較可能
+                mask = df_config['type'] == 'slot'
                 current_slots = df_config[mask].to_dict('records')
             
             if current_slots:
@@ -177,42 +225,24 @@ def main():
                     new_df = pd.DataFrame(new_rows)
                     final_df = pd.concat([base_df, new_df], ignore_index=True)
 
-                    # 3. 保存処理の呼び出し方を変更
+                    # 3. 保存
                     if save_data(conn, "Config", final_df):
-                        # 成功したときだけ実行されるブロック
                         st.success(f"{len(new_rows)} 件を追加しました！")
                         st.cache_data.clear()
                         
-                        # 成功メッセージを読む時間を少し与える（2秒待機）
-                        import time
-                        time.sleep(2)
-                        
+                        # 【調整】UI反映待ち時間を1秒に短縮（以前は2秒）
+                        time.sleep(1.0)
                         st.rerun()
-                    
-                    # --- デバッグ表示（確認用） ---
-                    st.write("▼ 保存直前のデータ（これが増えていればPython側は正常です）")
-                    st.dataframe(final_df.tail(5)) # 末尾5件を表示
-                    # -------------------------
-
-                    # 3. 保存 (新しい強力なsave_dataを使用)
-                    save_data(conn, "Config", final_df)
-                    
-                    st.success(f"{len(new_rows)} 件を追加しました！")
-                    st.cache_data.clear()
-                    
-                    # リラン前に少し待つ（Google側の反映待ち）
-                    import time
-                    time.sleep(1) 
-                    st.rerun()
 
             # リセットボタン
             st.write("---")
             if st.button("全日程を削除してリセットする", type="primary"):
-                # ヘッダーのみの空DFを作成して上書き（これでシートが綺麗になる）
+                # ヘッダーのみの空DFを作成して上書き
                 empty_df = pd.DataFrame(columns=EXPECTED_COLS)
-                save_data(conn, "Config", empty_df)
-                st.warning("日程を全て削除し、シートを初期化しました")
-                st.rerun()
+                if save_data(conn, "Config", empty_df):
+                    st.warning("日程を全て削除し、シートを初期化しました")
+                    time.sleep(1.0)
+                    st.rerun()
 
     # ==========================================
     # 👤 メンバーモード
@@ -221,13 +251,9 @@ def main():
         if df_members.empty:
             st.warning("メンバーが登録されていません。")
         else:
-            # データ型変換
-            for col in ['user_id', 'password', 'name', 'bands']:
-                if col in df_members.columns:
-                    df_members[col] = df_members[col].astype(str)
-            
+            # load_dataでクリーニング済みなので、ここでは辞書化するだけ
             users = df_members.to_dict('records')
-            user_map = {u['name']: u for u in users if 'name' in u and u['name'] != 'nan'}
+            user_map = {u['name']: u for u in users if 'name' in u and u['name']}
             
             st.subheader("ログイン")
             col1, col2 = st.columns([2, 1])
@@ -239,9 +265,10 @@ def main():
                 input_pass = col2.text_input("パスワード", type="password")
 
                 current_user = user_map.get(selected_name)
-                # パスワード照合
+                
+                # パスワード照合（クリーニング済みなので単純比較でOK）
                 p_in = str(input_pass).strip()
-                p_store = str(current_user.get('password', '')).strip().replace('.0', '')
+                p_store = str(current_user.get('password', ''))
                 
                 if current_user and p_in and p_store == p_in:
                     st.success(f"ようこそ {selected_name} さん")
@@ -249,7 +276,7 @@ def main():
                     # 日程取得
                     slots = []
                     if not df_config.empty and set(EXPECTED_COLS).issubset(df_config.columns):
-                        mask = df_config['type'].astype(str).str.strip() == 'slot'
+                        mask = df_config['type'] == 'slot'
                         slots = df_config[mask].to_dict('records')
 
                     st.write("---")
@@ -264,12 +291,12 @@ def main():
                                 input_data = []
                                 for slot in slots:
                                     # 既存回答取得
-                                    default_idx = 2
+                                    default_idx = 2 # ？
                                     if not df_responses.empty and {'user_id','slot_id','status'}.issubset(df_responses.columns):
-                                        # 文字列比較
+                                        # クリーニング済みなので単純比較
                                         prev = df_responses[
-                                            (df_responses['user_id'].astype(str) == str(current_user['user_id'])) & 
-                                            (df_responses['slot_id'].astype(str) == str(slot['id']))
+                                            (df_responses['user_id'] == current_user['user_id']) & 
+                                            (df_responses['slot_id'] == slot['id'])
                                         ]
                                         if not prev.empty:
                                             try:
@@ -277,7 +304,7 @@ def main():
                                             except: pass
                                     
                                     val = st.radio(f"**{slot['name']}**", STATUS_OPTIONS, index=default_idx, horizontal=True, key=slot['id'])
-                                    input_data.append({"user_id": str(current_user['user_id']), "slot_id": str(slot['id']), "status": val})
+                                    input_data.append({"user_id": current_user['user_id'], "slot_id": slot['id'], "status": val})
                                 
                                 if st.form_submit_button("保存する", type="primary"):
                                     new_input_df = pd.DataFrame(input_data)
@@ -285,18 +312,22 @@ def main():
                                     # 既存データを保持しつつ更新
                                     other_df = pd.DataFrame(columns=["user_id", "slot_id", "status"])
                                     if not df_responses.empty and {'user_id','slot_id','status'}.issubset(df_responses.columns):
-                                         mask = df_responses['user_id'].astype(str) != str(current_user['user_id'])
+                                         mask = df_responses['user_id'] != current_user['user_id']
                                          other_df = df_responses[mask]
 
                                     final_res = pd.concat([other_df, new_input_df], ignore_index=True)
-                                    save_data(conn, "Responses", final_res)
-                                    st.toast("保存しました！")
-                                    st.rerun()
+                                    
+                                    if save_data(conn, "Responses", final_res):
+                                        st.toast("保存しました！")
+                                        # 【調整】サクサク動くように0.5秒待機にしてリラン
+                                        time.sleep(0.5)
+                                        st.rerun()
 
                     elif mode == "🔍 バンドの予定を見る":
                         st.subheader("🔍 確認")
-                        my_bands = str(current_user.get('bands', '')).replace(" ", "").split(",")
-                        my_bands = [b for b in my_bands if b and b != 'nan']
+                        # bandsカラムの処理（クリーニング済み）
+                        my_bands_str = current_user.get('bands', '')
+                        my_bands = [b.strip() for b in my_bands_str.replace(" ", "").split(",") if b.strip()]
                         
                         if not my_bands:
                             st.warning("バンド所属情報がありません")
@@ -310,14 +341,14 @@ def main():
                                 r_map = {}
                                 if not df_responses.empty and {'user_id','slot_id','status'}.issubset(df_responses.columns):
                                     for _, r in df_responses.iterrows():
-                                        r_map[(str(r['user_id']), str(r['slot_id']))] = r['status']
+                                        r_map[(r['user_id'], r['slot_id'])] = r['status']
                                 
                                 view_data = []
                                 for slot in slots:
                                     row = {"日程": slot['name']}
                                     statuses = []
                                     for m in members:
-                                        s = r_map.get((str(m['user_id']), str(slot['id'])), "？")
+                                        s = r_map.get((m['user_id'], slot['id']), "？")
                                         row[m['name']] = s
                                         statuses.append(s)
                                     
