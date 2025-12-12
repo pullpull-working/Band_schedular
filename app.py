@@ -3,7 +3,7 @@ import pandas as pd
 from streamlit_gsheets import GSheetsConnection
 import re
 import uuid
-import time # 待機時間制御のために必要
+import time 
 
 # ==========================================
 # ▼ 設定エリア
@@ -37,11 +37,9 @@ def load_data(conn):
         df_members = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Members", ttl=0)
         
         # --- データクリーニング (Excel/数値の変換ブレ対策) ---
-        # ここで一括して綺麗な文字列型にしておくことで、後のロジックを単純化する
         
         # 1. Config
         if not df_config.empty:
-            # 全て文字列化
             df_config = df_config.fillna("").astype(str)
             
         # 2. Responses
@@ -62,24 +60,16 @@ def load_data(conn):
 
 def save_data(conn, sheet_name, df):
     """
-    データの保存（ロバストモード）
-    標準のconn.updateではなく、クリア→書き込みを行うことで
-    列ズレやゴミデータの残留を防ぐ
+    データの保存（標準update使用・整形済みなので安全）
     """
     try:
         # 1. データを文字列化し、NaNを埋める
         df_clean = df.fillna("").astype(str)
         
-        # 2. DataFrameをリスト形式（ヘッダー付き）に変換
-        raw_data = [df_clean.columns.tolist()] + df_clean.values.tolist()
-        
-        # 3. 内部クライアントで直接操作
-        sh = conn.client.open_by_url(SPREADSHEET_URL)
-        ws = sh.worksheet(sheet_name)
-        
-        # 4. クリアして書き込み（これが一番バグらない）
-        ws.clear()
-        ws.update(range_name="A1", values=raw_data)
+        # 2. 標準のconn.updateを使用
+        # 以前のエラー原因（列ズレ・型エラー）はmain関数側で排除済みのため
+        # ここは標準機能を使うのが最も安全です。
+        conn.update(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name, data=df_clean)
         
         return True 
         
@@ -146,28 +136,24 @@ def main():
         if password == ADMIN_PASSWORD:
             st.success("ログイン成功")
             
-            # --- 現在の日程一覧 ---
             st.subheader("日程枠の管理")
             
-            # 列名の整合性チェックと補正
             current_slots = []
             
+            # データフレーム初期化（空の場合の対策）
             if df_config.empty:
-                 # データが無い場合は正しい列定義で空作成
                  df_config = pd.DataFrame(columns=EXPECTED_COLS)
             
-            # 必須列が含まれているか確認
+            # 列定義の強制補正
+            # (スプレッドシート側で列が足りない・名前が違う場合、強制的にプログラム側の定義に合わせる)
             if not set(EXPECTED_COLS).issubset(df_config.columns):
-                # 列数が足りているなら、強制的にヘッダーを付け替える（データ救済）
                 if len(df_config.columns) >= len(EXPECTED_COLS):
                       current_cols = list(df_config.columns)
-                      # 先頭5列を期待する列名に強制変更
                       new_cols = EXPECTED_COLS + current_cols[len(EXPECTED_COLS):]
                       df_config.columns = new_cols
             
-            # 抽出
+            # データの抽出
             if set(EXPECTED_COLS).issubset(df_config.columns):
-                # データクリーニング済みなので、そのまま比較可能
                 mask = df_config['type'] == 'slot'
                 current_slots = df_config[mask].to_dict('records')
             
@@ -191,7 +177,6 @@ def main():
                     placeholder=placeholder_text
                 )
                 
-                # パース結果の確認用ロジック
                 preview_list = parse_schedule_text(candidate_text)
                 if preview_list:
                     st.caption(f"▼ 追加される日程 ({len(preview_list)}件):")
@@ -215,22 +200,20 @@ def main():
                         }
                         new_rows.append(new_row)
                     
-                    # 1. ベースデータ作成
+                    # ベースデータ作成
                     if set(EXPECTED_COLS).issubset(df_config.columns):
                         base_df = df_config[EXPECTED_COLS].copy()
                     else:
                         base_df = pd.DataFrame(columns=EXPECTED_COLS)
                     
-                    # 2. 結合
+                    # 結合
                     new_df = pd.DataFrame(new_rows)
                     final_df = pd.concat([base_df, new_df], ignore_index=True)
 
-                    # 3. 保存
+                    # 保存
                     if save_data(conn, "Config", final_df):
                         st.success(f"{len(new_rows)} 件を追加しました！")
                         st.cache_data.clear()
-                        
-                        # 【調整】UI反映待ち時間を1秒に短縮（以前は2秒）
                         time.sleep(1.0)
                         st.rerun()
 
@@ -251,7 +234,6 @@ def main():
         if df_members.empty:
             st.warning("メンバーが登録されていません。")
         else:
-            # load_dataでクリーニング済みなので、ここでは辞書化するだけ
             users = df_members.to_dict('records')
             user_map = {u['name']: u for u in users if 'name' in u and u['name']}
             
@@ -266,14 +248,13 @@ def main():
 
                 current_user = user_map.get(selected_name)
                 
-                # パスワード照合（クリーニング済みなので単純比較でOK）
+                # パスワード照合
                 p_in = str(input_pass).strip()
                 p_store = str(current_user.get('password', ''))
                 
                 if current_user and p_in and p_store == p_in:
                     st.success(f"ようこそ {selected_name} さん")
                     
-                    # 日程取得
                     slots = []
                     if not df_config.empty and set(EXPECTED_COLS).issubset(df_config.columns):
                         mask = df_config['type'] == 'slot'
@@ -291,9 +272,8 @@ def main():
                                 input_data = []
                                 for slot in slots:
                                     # 既存回答取得
-                                    default_idx = 2 # ？
+                                    default_idx = 2
                                     if not df_responses.empty and {'user_id','slot_id','status'}.issubset(df_responses.columns):
-                                        # クリーニング済みなので単純比較
                                         prev = df_responses[
                                             (df_responses['user_id'] == current_user['user_id']) & 
                                             (df_responses['slot_id'] == slot['id'])
@@ -319,13 +299,11 @@ def main():
                                     
                                     if save_data(conn, "Responses", final_res):
                                         st.toast("保存しました！")
-                                        # 【調整】サクサク動くように0.5秒待機にしてリラン
                                         time.sleep(0.5)
                                         st.rerun()
 
                     elif mode == "🔍 バンドの予定を見る":
                         st.subheader("🔍 確認")
-                        # bandsカラムの処理（クリーニング済み）
                         my_bands_str = current_user.get('bands', '')
                         my_bands = [b.strip() for b in my_bands_str.replace(" ", "").split(",") if b.strip()]
                         
