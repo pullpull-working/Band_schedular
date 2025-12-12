@@ -16,13 +16,11 @@ STATUS_OPTIONS = ["〇", "△", "？", "×"]
 
 def load_data(conn):
     """データの読み込み"""
-    try:
-        df_config = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Config", ttl=0)
-        df_responses = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Responses", ttl=0)
-        return df_config, df_responses
-    except Exception:
-        # 初回起動時などデータがない場合
-        return pd.DataFrame(), pd.DataFrame(columns=["user_id", "slot_id", "status"])
+    # エラーが出たらそのままクラッシュさせる（原因を見るため）
+    df_config = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Config", ttl=0)
+    # df_responses の読み込みでコケる可能性もあるので、一旦 Config だけ読んでみるのも手ですが、まずは両方
+    df_responses = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Responses", ttl=0)
+    return df_config, df_responses
 
 def save_data(conn, sheet_name, df):
     """データの保存"""
@@ -44,11 +42,6 @@ def main():
     # 接続確立
     conn = st.connection("gsheets", type=GSheetsConnection)
     df_config, df_responses = load_data(conn)
-
-    # ▼▼▼ デバッグ用: 読み込んだデータをそのまま画面に出す ▼▼▼
-    st.write("▼ デバッグ: Configシートの中身")
-    st.dataframe(df_config)
-    # ▲▲▲ ここまで ▲▲▲
 
     # --- メニュー切り替え ---
     menu = st.sidebar.radio("メニュー", ["👤 メンバー用 (入力・確認)", "⚙️ 管理者用 (設定)"])
