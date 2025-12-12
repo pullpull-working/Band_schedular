@@ -45,6 +45,11 @@ def main():
     conn = st.connection("gsheets", type=GSheetsConnection)
     df_config, df_responses = load_data(conn)
 
+    # ▼▼▼ デバッグ用: 読み込んだデータをそのまま画面に出す ▼▼▼
+    st.write("▼ デバッグ: Configシートの中身")
+    st.dataframe(df_config)
+    # ▲▲▲ ここまで ▲▲▲
+
     # --- メニュー切り替え ---
     menu = st.sidebar.radio("メニュー", ["👤 メンバー用 (入力・確認)", "⚙️ 管理者用 (設定)"])
 
