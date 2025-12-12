@@ -16,10 +16,9 @@ STATUS_OPTIONS = ["〇", "△", "？", "×"]
 
 def load_data(conn):
     """データの読み込み"""
-    # エラーが出たらそのままクラッシュさせる（原因を見るため）
-    df_config = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Config", ttl=0)
-    # df_responses の読み込みでコケる可能性もあるので、一旦 Config だけ読んでみるのも手ですが、まずは両方
-    df_responses = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Responses", ttl=0)
+    # 5秒間はキャッシュを使う（連打対策）
+    df_config = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Config", ttl=5)
+    df_responses = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Responses", ttl=5)
     return df_config, df_responses
 
 def save_data(conn, sheet_name, df):
