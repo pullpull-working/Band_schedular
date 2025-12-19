@@ -116,42 +116,34 @@ def main():
     
     st.markdown("""
         <style>
-        /* 1. ヘッダー全体を強制的に消す（PC・スマホ共通） */
-        header {
+        /* 1. 右上の「Deploy」ボタンとツールバー（...）だけを消す */
+        .stDeployButton {
             visibility: hidden !important;
             display: none !important;
-            height: 0px !important;
         }
-        
-        /* 2. 特定のIDを持つヘッダー要素も狙い撃ち */
-        header[data-testid="stHeader"] {
+        [data-testid="stToolbar"] {
             visibility: hidden !important;
             display: none !important;
         }
         
-        /* 3. スマホで上部に出てくるデコレーションバーを消す */
-        .stApp > header {
-            display: none !important;
-        }
-
-        /* 4. ツールバーとデプロイボタン */
-        [data-testid="stToolbar"], .stDeployButton {
-            visibility: hidden !important;
-            display: none !important;
-        }
-        
-        /* 5. フッター */
+        /* 2. フッター（Made with Streamlit）を消す */
         footer {
             visibility: hidden !important;
             display: none !important;
         }
         
-        /* 6. ハンバーガーメニュー */
-        #MainMenu {
-            visibility: hidden !important;
-            display: none !important;
+        /* 3. ヘッダー全体は消さない！（これを消すとメニューが押せなくなる） */
+        /* その代わり、ヘッダーの背景色を透過させてスッキリさせる */
+        header[data-testid="stHeader"] {
+            background-color: rgba(0,0,0,0);
         }
-        
+
+        /* 4. 左上のメニューボタン（三本線・>マーク）は絶対に表示させる */
+        [data-testid="collapsedControl"] {
+            display: block !important;
+            visibility: visible !important;
+        }
+
         /* --- アプリ自体のスタイル --- */
         .stRadio > label {font-size: 1.2rem; font-weight:bold;}
         .stButton > button {width: 100%; height: 3em; font-weight:bold;}
@@ -159,10 +151,8 @@ def main():
             padding-bottom: 10px;
             border-bottom: 1px solid #f0f2f6;
         }
-        
-        /* スマホで余白が空きすぎるのを防ぐ調整 */
         .block-container {
-            padding-top: 1rem !important;
+            padding-top: 2rem !important; /* メニューと重ならないよう少し下げる */
         }
         </style>
     """, unsafe_allow_html=True)
