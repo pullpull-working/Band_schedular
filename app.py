@@ -139,7 +139,6 @@ def main():
         if password == ADMIN_PASSWORD:
             st.success("ログイン成功")
             
-            # --- 現在の日程（表示のみ） ---
             st.subheader("登録済み日程一覧")
             
             current_slots = []
@@ -161,7 +160,6 @@ def main():
             else:
                 st.info("日程が登録されていません")
 
-            # --- 一括入力 ---
             st.write("---")
             st.subheader("日程の一括追加")
             with st.form("add_slot_bulk"):
@@ -172,6 +170,11 @@ def main():
                 submit_slot = st.form_submit_button("追加する")
             
             if submit_slot:
+                # ★修正: ここでも念のため最新のConfigを読み直してから追加する
+                fresh_config, _, _ = load_data(conn)
+                if fresh_config.empty and not df_config.empty:
+                    fresh_config = df_config.copy() # 読み込み失敗時はキャッシュを使う
+
                 preview_list = parse_schedule_text(candidate_text)
                 if not preview_list:
                     st.error("日程を認識できませんでした。")
@@ -183,8 +186,8 @@ def main():
                         })
                     new_df = pd.DataFrame(new_rows)
                     
-                    if set(EXPECTED_COLS).issubset(df_config.columns):
-                        base_df = df_config[EXPECTED_COLS].copy()
+                    if set(EXPECTED_COLS).issubset(fresh_config.columns):
+                        base_df = fresh_config[EXPECTED_COLS].copy()
                     else:
                         base_df = pd.DataFrame(columns=EXPECTED_COLS)
                         
@@ -196,12 +199,10 @@ def main():
                         time.sleep(1.0)
                         st.rerun()
 
-            # --- 全削除ボタン ---
             st.write("---")
             st.subheader("日程のリセット")
             st.caption("※ 注意：日程だけでなく、メンバーが入力した回答データも全て消去されます。")
             if st.button("全日程・全回答を削除してリセットする", type="primary"):
-                # ConfigとResponsesを両方空にする
                 empty_config = pd.DataFrame(columns=EXPECTED_COLS)
                 empty_responses = pd.DataFrame(columns=["user_id", "slot_id", "status"])
                 
@@ -255,13 +256,10 @@ def main():
                         if not slots:
                             st.info("現在、調整中の日程はありません。")
                         else:
-                            # フォームを使ってラジオボタンで入力
                             with st.form("schedule_form"):
                                 input_data = []
                                 for slot in slots:
-                                    default_idx = 2 # 「？」をデフォルトに
-                                    
-                                    # 過去の回答があればそれを初期値にする
+                                    default_idx = 2
                                     if not df_responses.empty and {'user_id','slot_id','status'}.issubset(df_responses.columns):
                                         prev = df_responses[
                                             (df_responses['user_id'] == str(current_user['user_id'])) & 
@@ -273,19 +271,30 @@ def main():
                                                 default_idx = STATUS_OPTIONS.index(val)
                                             except: pass
                                     
-                                    # ラジオボタン表示
                                     val = st.radio(f"**{slot['name']}**", STATUS_OPTIONS, index=default_idx, horizontal=True, key=slot['id'])
                                     input_data.append({"user_id": str(current_user['user_id']), "slot_id": str(slot['id']), "status": val})
                                 
                                 # 保存ボタン
                                 if st.form_submit_button("回答を保存する", type="primary"):
+                                    # ★重要修正: ボタンが押された瞬間に、最新の回答データをサーバーから取得する！
+                                    _, fresh_responses, _ = load_data(conn)
+                                    
+                                    # もし取得失敗したら、古いデータ(df_responses)を代用するが、基本は最新を使う
+                                    if fresh_responses.empty and not df_responses.empty:
+                                        fresh_responses = df_responses.copy()
+                                    elif fresh_responses.empty: # 本当に初回など
+                                        fresh_responses = pd.DataFrame(columns=["user_id", "slot_id", "status"])
+
                                     new_input_df = pd.DataFrame(input_data)
                                     
                                     other_df = pd.DataFrame(columns=["user_id", "slot_id", "status"])
-                                    if not df_responses.empty and {'user_id','slot_id','status'}.issubset(df_responses.columns):
+                                    
+                                    # 最新データ(fresh_responses)を使ってマージ作業をする
+                                    if not fresh_responses.empty and {'user_id','slot_id','status'}.issubset(fresh_responses.columns):
                                          clean_uid = str(current_user['user_id'])
-                                         mask = df_responses['user_id'] != clean_uid
-                                         other_df = df_responses[mask]
+                                         # 自分以外のデータを「最新の状態」から抽出して残す
+                                         mask = fresh_responses['user_id'] != clean_uid
+                                         other_df = fresh_responses[mask]
 
                                     final_res = pd.concat([other_df, new_input_df], ignore_index=True)
                                     
@@ -294,14 +303,17 @@ def main():
                                         time.sleep(0.5)
                                         st.rerun()
 
-                            # 削除ボタン（隠さずに表示）
                             st.write("")
                             st.write("---")
                             st.caption("※ 間違えて入力した場合など、最初からやり直したい時はこちら")
                             if st.button("自分の回答を全て削除する"):
-                                if not df_responses.empty and 'user_id' in df_responses.columns:
+                                # ★削除の時も最新データを取得してから消す
+                                _, fresh_responses, _ = load_data(conn)
+                                
+                                if not fresh_responses.empty and 'user_id' in fresh_responses.columns:
                                     clean_uid = str(current_user['user_id'])
-                                    new_df = df_responses[df_responses['user_id'] != clean_uid]
+                                    # 最新データから自分を除外
+                                    new_df = fresh_responses[fresh_responses['user_id'] != clean_uid]
                                     
                                     if save_data(conn, "Responses", new_df):
                                         st.warning("回答を全て削除（リセット）しました。")
