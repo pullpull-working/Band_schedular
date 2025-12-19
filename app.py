@@ -112,7 +112,7 @@ def parse_schedule_text(text):
 # ==========================================
 
 def main():
-    st.set_page_config(page_title="バンド日程調整", layout="wide", page_icon="🎸")
+    st.set_page_config(page_title="バンド日調アプリ", layout="wide", page_icon="🎤")
     
     st.markdown("""
         <style>
@@ -121,9 +121,6 @@ def main():
         
         /* 右上の「Deploy」ボタンやGitHubアイコンを消す */
         .stDeployButton {display:none;}
-        
-        /* もし右上のハンバーガーメニュー（三本線）も消したければ以下を有効化 */
-        /* #MainMenu {visibility: hidden;} */
         
         /* その他UI調整 */
         .stRadio > label {font-size: 1.2rem; font-weight:bold;}
@@ -382,7 +379,7 @@ def main():
                 elif input_pass:
                     st.error("パスワードが違います")
                 else:
-                    st.info("パスワードを入力してください")
+                    st.info("パスワードを入力してください。フォームに未回答の方は https://docs.google.com/forms/d/1KRm7CHEbiNUqKGsf5qw4sBEktYqHZf5YA_dF5ygQv9I/edit?hl=ja のフォームを答えてね")
 
 if __name__ == "__main__":
     main()
