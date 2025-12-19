@@ -379,7 +379,7 @@ def main():
                 elif input_pass:
                     st.error("パスワードが違います")
                 else:
-                    st.info("パスワードを入力してください。フォームに未回答の方は https://docs.google.com/forms/d/1KRm7CHEbiNUqKGsf5qw4sBEktYqHZf5YA_dF5ygQv9I/edit?hl=ja のフォームを答えてね")
+                    st.info("パスワードを入力してください。フォームに未回答の方は https://forms.gle/bQqeozh5KhjBMzSy7 のフォームを答えてね")
 
 if __name__ == "__main__":
     main()
