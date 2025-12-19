@@ -30,29 +30,47 @@ def clean_numeric_str(val):
     return s
 
 def load_data(conn):
-    """データの読み込みと初期クリーニング"""
+    """
+    データの読み込み（エラー分離版）
+    1つのシートが読み込めなくても、他のシート（特にメンバー表）は死守する
+    """
+    # 初期値は空のDataFrame
+    df_config = pd.DataFrame()
+    df_responses = pd.DataFrame()
+    df_members = pd.DataFrame()
+
+    # 1. Config (Configが読めないのは致命的ではない)
     try:
         df_config = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Config", ttl=0)
-        df_responses = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Responses", ttl=0)
-        df_members = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Members", ttl=0)
-        
-        # --- データクリーニング ---
         if not df_config.empty:
             df_config = df_config.fillna("").astype(str)
-            
+    except Exception:
+        pass # Configエラーは一旦無視
+
+    # 2. Responses (ここが更新直後によくコケる)
+    try:
+        df_responses = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Responses", ttl=0)
         if not df_responses.empty:
             for col in ['user_id', 'slot_id']:
                 if col in df_responses.columns:
                     df_responses[col] = df_responses[col].apply(clean_numeric_str)
-                    
+    except Exception:
+        pass # 回答データが読めなくてもアプリは落とさない
+
+    # 3. Members (ここは超重要。エラーなら隠さずに表示する)
+    try:
+        df_members = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Members", ttl=0)
         if not df_members.empty:
             for col in ['user_id', 'password', 'name', 'bands']:
                 if col in df_members.columns:
                     df_members[col] = df_members[col].apply(clean_numeric_str)
+    except Exception as e:
+        # メンバー表が読めない場合のみ、明確にエラーを出す（誤表記を防ぐため）
+        st.error(f"メンバー表の読み込みに失敗しました: {e}")
+        # ここでreturnすると空DFが返るので、再読み込みボタンなどを出すのも手
+        st.button("再読み込み")
 
-        return df_config.copy(), df_responses.copy(), df_members.copy()
-    except Exception:
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+    return df_config.copy(), df_responses.copy(), df_members.copy()
 
 def save_data(conn, sheet_name, df):
     """データの保存"""
