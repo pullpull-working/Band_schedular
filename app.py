@@ -73,13 +73,37 @@ def load_data(conn):
     return df_config.copy(), df_responses.copy(), df_members.copy()
 
 def save_data(conn, sheet_name, df):
-    """データの保存"""
+    """
+    データの保存（頑丈版）
+    URL指定あり・なしの両パターンを試して、
+    'Sheet Not Found' エラーを回避する
+    """
     try:
+        # 1. データを文字列化し、NaNを埋める
         df_clean = df.fillna("").astype(str)
-        conn.update(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name, data=df_clean)
-        return True 
+        
+        # 2. 更新実行
+        # まずは「URLを指定せずに」トライします
+        # (secrets.toml の設定を優先させるため、これが一番成功率が高い)
+        try:
+            conn.update(worksheet=sheet_name, data=df_clean)
+            return True
+        except Exception:
+            # もしダメなら、「URLを明示して」再トライします
+            try:
+                conn.update(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name, data=df_clean)
+                return True
+            except Exception as inner_e:
+                # それでもダメならエラーとして投げる
+                raise inner_e
+        
     except Exception as e:
-        st.error(f"保存中にエラーが発生しました: {e}")
+        err_msg = str(e)
+        if "not found" in err_msg.lower() or "見つかりません" in err_msg:
+            st.error(f"エラー: シート '{sheet_name}' が見つかりません。")
+            st.info(f"スプレッドシートに '{sheet_name}' という名前のシート（タブ）があるか確認してください。")
+        else:
+            st.error(f"保存中にエラーが発生しました: {e}")
         return False
 
 def parse_schedule_text(text):
