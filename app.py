@@ -82,29 +82,14 @@ def save_data(conn, sheet_name, df):
         return False
 
 def parse_schedule_text(text):
-    """調整さん形式の解析"""
+    """単純な行ごとの解析（補完なし）"""
     if not text:
         return []
 
+    # 単純に改行で区切り、前後の空白を除去し、空行以外をリストにする
     lines = text.splitlines()
-    candidates = []
-    current_date = None
-    date_pattern = re.compile(r'(\d{1,4}/\d{1,2}(?:/\d{1,2})?)(?:\(.*\))?\s*(.*)')
-
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        match = date_pattern.match(line)
-        if match:
-            current_date = match.group(1)
-            time_part = match.group(2).strip()
-            if time_part:
-                candidates.append(f"{current_date} {time_part}")
-        elif current_date:
-            candidates.append(f"{current_date} {line}")
-        else:
-            candidates.append(line)
+    candidates = [line.strip() for line in lines if line.strip()]
+    
     return candidates
 
 # ==========================================
@@ -176,7 +161,7 @@ def main():
                 placeholder_text = """12/13(土) 10:00-11:00
 11:00-12:00
 12/14(日) 13:00-14:00"""
-                candidate_text = st.text_area("テキスト貼り付けで追加（調整さん形式）", height=150, placeholder=placeholder_text)
+                candidate_text = st.text_area("テキスト貼り付けで追加（1行ずつそのまま追加されます）", height=150, placeholder=placeholder_text)
                 submit_slot = st.form_submit_button("追加する")
             
             if submit_slot:
