@@ -114,7 +114,7 @@ def parse_schedule_text(text):
 
 def main():
     # 1. ページ設定（必ず最初）
-    st.set_page_config(page_title="バンド日程調整", layout="wide", page_icon="🎸")
+    st.set_page_config(page_title="バンド日調アプリ", layout="wide", page_icon="🎙")
     
     # 2. UI調整（GitHubアイコンやフッターを隠すCSS）
     st.markdown("""
