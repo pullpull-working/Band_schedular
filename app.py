@@ -116,16 +116,35 @@ def main():
     
     st.markdown("""
         <style>
-        /* 右下のフッター（Made with Streamlit）を消す */
-        footer {visibility: hidden;}
+        /* 1. ヘッダー（上の色付きバーや右上のボタン領域）を隠す */
+        header[data-testid="stHeader"] {
+            visibility: hidden;
+        }
         
-        /* 右上の「Deploy」ボタンやGitHubアイコンを消す */
-        .stDeployButton {display:none;}
+        /* 2. ツールバー（右上のオプションボタンなど）を隠す */
+        [data-testid="stToolbar"] {
+            visibility: hidden;
+            display: none;
+        }
         
-        /* もし右上のハンバーガーメニュー（三本線）も消したければ以下を有効化 */
-        #MainMenu {visibility: hidden;}
+        /* 3. デプロイボタン周辺の要素を特定して消す */
+        .stDeployButton {
+            display: none;
+            visibility: hidden;
+        }
         
-        /* その他UI調整 */
+        /* 4. フッター（Made with Streamlit）を消す */
+        footer {
+            visibility: hidden;
+        }
+        
+        /* 5. ハンバーガーメニュー（三本線）も完全に消したい場合 */
+        #MainMenu {
+            visibility: hidden;
+            display: none;
+        }
+
+        /* アプリ自体のスタイル調整（ラジオボタン等） */
         .stRadio > label {font-size: 1.2rem; font-weight:bold;}
         .stButton > button {width: 100%; height: 3em; font-weight:bold;}
         div[data-testid="stRadio"] {
