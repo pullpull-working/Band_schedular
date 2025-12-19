@@ -139,9 +139,10 @@ def main():
         if password == ADMIN_PASSWORD:
             st.success("ログイン成功")
             
-            st.subheader("日程枠の編集・削除")
-            st.caption("※ 表の中を書き換えたり、行を選択して削除(右上のゴミ箱)できます。")
-
+            # --- 現在の日程（表示のみ） ---
+            st.subheader("登録済み日程一覧")
+            
+            current_slots = []
             if df_config.empty:
                  df_config = pd.DataFrame(columns=EXPECTED_COLS)
             
@@ -150,46 +151,25 @@ def main():
                       current_cols = list(df_config.columns)
                       new_cols = EXPECTED_COLS + current_cols[len(EXPECTED_COLS):]
                       df_config.columns = new_cols
+            
+            if set(EXPECTED_COLS).issubset(df_config.columns):
+                mask = df_config['type'] == 'slot'
+                current_slots = df_config[mask].to_dict('records')
+            
+            if current_slots:
+                # 編集機能（data_editor）は削除し、単純な表表示のみにする
+                st.table(pd.DataFrame(current_slots)[['name']])
+            else:
+                st.info("日程が登録されていません")
 
-            slot_df = df_config[df_config['type'] == 'slot'].copy()
-
-            # 管理者用エディタ
-            edited_df = st.data_editor(
-                slot_df,
-                column_config={
-                    "name": st.column_config.TextColumn("日程 (編集可)", required=True),
-                    "id": st.column_config.TextColumn("ID", disabled=True), 
-                    "type": None, "extra": None, "pass": None
-                },
-                num_rows="dynamic",
-                key="admin_editor",
-                use_container_width=True
-            )
-
-            if st.button("編集内容を保存して更新する", type="primary"):
-                def fill_missing_data(row):
-                    if not row['id'] or row['id'] == 'None' or row['id'] == '':
-                        row['id'] = f"s_{uuid.uuid4().hex}"
-                    row['type'] = 'slot'
-                    return row
-                
-                final_slots = edited_df.apply(fill_missing_data, axis=1)
-                other_config = df_config[df_config['type'] != 'slot']
-                save_target_df = pd.concat([other_config, final_slots], ignore_index=True)
-                
-                if save_data(conn, "Config", save_target_df):
-                    st.success("日程を更新しました！")
-                    st.cache_data.clear()
-                    time.sleep(1.0)
-                    st.rerun()
-
+            # --- 一括入力 ---
             st.write("---")
-            st.subheader("テキスト貼り付けで追加（調整さん形式）")
+            st.subheader("日程の一括追加")
             with st.form("add_slot_bulk"):
                 placeholder_text = """12/13(土) 10:00-11:00
 11:00-12:00
 12/14(日) 13:00-14:00"""
-                candidate_text = st.text_area("日程を追加", height=150, placeholder=placeholder_text)
+                candidate_text = st.text_area("テキスト貼り付けで追加（調整さん形式）", height=150, placeholder=placeholder_text)
                 submit_slot = st.form_submit_button("追加する")
             
             if submit_slot:
@@ -203,7 +183,14 @@ def main():
                             "type": "slot", "id": f"s_{uuid.uuid4().hex}", "name": cand, "extra": "", "pass": ""
                         })
                     new_df = pd.DataFrame(new_rows)
-                    final_df = pd.concat([df_config, new_df], ignore_index=True)
+                    
+                    # ベースを作成して結合
+                    if set(EXPECTED_COLS).issubset(df_config.columns):
+                        base_df = df_config[EXPECTED_COLS].copy()
+                    else:
+                        base_df = pd.DataFrame(columns=EXPECTED_COLS)
+                        
+                    final_df = pd.concat([base_df, new_df], ignore_index=True)
 
                     if save_data(conn, "Config", final_df):
                         st.success(f"{len(new_rows)} 件を追加しました！")
@@ -211,14 +198,16 @@ def main():
                         time.sleep(1.0)
                         st.rerun()
 
+            # --- 全削除ボタン（隠さず表示） ---
             st.write("---")
-            with st.expander("危険エリア: 全日程削除"):
-                if st.button("全日程を削除してリセットする", type="primary"):
-                    empty_df = pd.DataFrame(columns=EXPECTED_COLS)
-                    if save_data(conn, "Config", empty_df):
-                        st.warning("日程を初期化しました")
-                        time.sleep(1.0)
-                        st.rerun()
+            st.subheader("日程のリセット")
+            # st.expander を削除し、ボタンを直接配置
+            if st.button("全日程を削除してリセットする", type="primary"):
+                empty_df = pd.DataFrame(columns=EXPECTED_COLS)
+                if save_data(conn, "Config", empty_df):
+                    st.warning("日程を全て削除し、初期化しました")
+                    time.sleep(1.0)
+                    st.rerun()
 
     # ------------------------------------------
     # 👤 メンバーモード
@@ -336,7 +325,6 @@ def main():
 
                     elif mode == "🔍 バンドの予定を見る":
                         st.subheader("🔍 確認")
-                        # 修正: スペースを完全に削除せず、カンマ区切り前後の空白のみ除去する
                         my_bands_str = current_user.get('bands', '')
                         my_bands = [b.strip() for b in my_bands_str.split(",") if b.strip()]
                         
@@ -345,7 +333,6 @@ def main():
                         else:
                             target = st.selectbox("バンドを選択", my_bands)
                             if target:
-                                # 修正: メンバー検索時も同様に空白除去してマッチング
                                 members = []
                                 for u in users:
                                     u_bands = [b.strip() for b in str(u.get('bands', '')).split(",")]
@@ -376,7 +363,6 @@ def main():
                                     view_data.append(row)
                                 
                                 if view_data:
-                                    # 修正: keyを追加して、バンド切り替え時に確実に再描画させる
                                     st.dataframe(pd.DataFrame(view_data), hide_index=True, key=f"view_{target}")
                                 else:
                                     st.warning("表示するデータがありません")
