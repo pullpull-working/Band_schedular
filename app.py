@@ -116,40 +116,53 @@ def main():
     
     st.markdown("""
         <style>
-        /* 1. ヘッダー（上の色付きバーや右上のボタン領域）を隠す */
+        /* 1. ヘッダー全体を強制的に消す（PC・スマホ共通） */
+        header {
+            visibility: hidden !important;
+            display: none !important;
+            height: 0px !important;
+        }
+        
+        /* 2. 特定のIDを持つヘッダー要素も狙い撃ち */
         header[data-testid="stHeader"] {
-            visibility: hidden;
+            visibility: hidden !important;
+            display: none !important;
         }
         
-        /* 2. ツールバー（右上のオプションボタンなど）を隠す */
-        [data-testid="stToolbar"] {
-            visibility: hidden;
-            display: none;
-        }
-        
-        /* 3. デプロイボタン周辺の要素を特定して消す */
-        .stDeployButton {
-            display: none;
-            visibility: hidden;
-        }
-        
-        /* 4. フッター（Made with Streamlit）を消す */
-        footer {
-            visibility: hidden;
-        }
-        
-        /* 5. ハンバーガーメニュー（三本線）も完全に消したい場合 */
-        #MainMenu {
-            visibility: hidden;
-            display: none;
+        /* 3. スマホで上部に出てくるデコレーションバーを消す */
+        .stApp > header {
+            display: none !important;
         }
 
-        /* アプリ自体のスタイル調整（ラジオボタン等） */
+        /* 4. ツールバーとデプロイボタン */
+        [data-testid="stToolbar"], .stDeployButton {
+            visibility: hidden !important;
+            display: none !important;
+        }
+        
+        /* 5. フッター */
+        footer {
+            visibility: hidden !important;
+            display: none !important;
+        }
+        
+        /* 6. ハンバーガーメニュー */
+        #MainMenu {
+            visibility: hidden !important;
+            display: none !important;
+        }
+        
+        /* --- アプリ自体のスタイル --- */
         .stRadio > label {font-size: 1.2rem; font-weight:bold;}
         .stButton > button {width: 100%; height: 3em; font-weight:bold;}
         div[data-testid="stRadio"] {
             padding-bottom: 10px;
             border-bottom: 1px solid #f0f2f6;
+        }
+        
+        /* スマホで余白が空きすぎるのを防ぐ調整 */
+        .block-container {
+            padding-top: 1rem !important;
         }
         </style>
     """, unsafe_allow_html=True)
