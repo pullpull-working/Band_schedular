@@ -112,7 +112,7 @@ def parse_schedule_text(text):
 # ==========================================
 
 def main():
-    st.set_page_config(page_title="バンド日程調整", layout="wide", page_icon="🎸")
+    st.set_page_config(page_title="バンド日調用アプリ", layout="wide", page_icon="🎙")
     
     st.markdown("""
         <style>
@@ -157,7 +157,6 @@ def main():
                 current_slots = df_config[mask].to_dict('records')
             
             if current_slots:
-                # 編集機能（data_editor）は削除し、単純な表表示のみにする
                 st.table(pd.DataFrame(current_slots)[['name']])
             else:
                 st.info("日程が登録されていません")
@@ -184,7 +183,6 @@ def main():
                         })
                     new_df = pd.DataFrame(new_rows)
                     
-                    # ベースを作成して結合
                     if set(EXPECTED_COLS).issubset(df_config.columns):
                         base_df = df_config[EXPECTED_COLS].copy()
                     else:
@@ -198,16 +196,27 @@ def main():
                         time.sleep(1.0)
                         st.rerun()
 
-            # --- 全削除ボタン（隠さず表示） ---
+            # --- 全削除ボタン ---
             st.write("---")
             st.subheader("日程のリセット")
-            # st.expander を削除し、ボタンを直接配置
-            if st.button("全日程を削除してリセットする", type="primary"):
-                empty_df = pd.DataFrame(columns=EXPECTED_COLS)
-                if save_data(conn, "Config", empty_df):
-                    st.warning("日程を全て削除し、初期化しました")
+            st.caption("※ 注意：日程だけでなく、メンバーが入力した回答データも全て消去されます。")
+            if st.button("全日程・全回答を削除してリセットする", type="primary"):
+                # 1. Config (日程) を空にする
+                empty_config = pd.DataFrame(columns=EXPECTED_COLS)
+                
+                # 2. Responses (回答) も空にする
+                empty_responses = pd.DataFrame(columns=["user_id", "slot_id", "status"])
+                
+                # 両方保存する
+                success_config = save_data(conn, "Config", empty_config)
+                success_res = save_data(conn, "Responses", empty_responses)
+                
+                if success_config and success_res:
+                    st.warning("日程と回答を全て削除し、初期化しました")
                     time.sleep(1.0)
                     st.rerun()
+                else:
+                    st.error("削除処理の一部に失敗しました")
 
     # ------------------------------------------
     # 👤 メンバーモード
@@ -271,7 +280,6 @@ def main():
                             
                             df_input = pd.DataFrame(input_data)
 
-                            # メンバー用エディタ
                             edited_df = st.data_editor(
                                 df_input,
                                 column_config={
