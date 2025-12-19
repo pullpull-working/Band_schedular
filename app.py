@@ -116,43 +116,21 @@ def main():
     
     st.markdown("""
         <style>
-        /* 1. 右上の「Deploy」ボタンとツールバー（...）だけを消す */
-        .stDeployButton {
-            visibility: hidden !important;
-            display: none !important;
-        }
-        [data-testid="stToolbar"] {
-            visibility: hidden !important;
-            display: none !important;
-        }
+        /* 右下のフッター（Made with Streamlit）を消す */
+        footer {visibility: hidden;}
         
-        /* 2. フッター（Made with Streamlit）を消す */
-        footer {
-            visibility: hidden !important;
-            display: none !important;
-        }
+        /* 右上の「Deploy」ボタンやGitHubアイコンを消す */
+        .stDeployButton {display:none;}
         
-        /* 3. ヘッダー全体は消さない！（これを消すとメニューが押せなくなる） */
-        /* その代わり、ヘッダーの背景色を透過させてスッキリさせる */
-        header[data-testid="stHeader"] {
-            background-color: rgba(0,0,0,0);
-        }
-
-        /* 4. 左上のメニューボタン（三本線・>マーク）は絶対に表示させる */
-        [data-testid="collapsedControl"] {
-            display: block !important;
-            visibility: visible !important;
-        }
-
-        /* --- アプリ自体のスタイル --- */
+        /* もし右上のハンバーガーメニュー（三本線）も消したければ以下を有効化 */
+        /* #MainMenu {visibility: hidden;} */
+        
+        /* その他UI調整 */
         .stRadio > label {font-size: 1.2rem; font-weight:bold;}
         .stButton > button {width: 100%; height: 3em; font-weight:bold;}
         div[data-testid="stRadio"] {
             padding-bottom: 10px;
             border-bottom: 1px solid #f0f2f6;
-        }
-        .block-container {
-            padding-top: 2rem !important; /* メニューと重ならないよう少し下げる */
         }
         </style>
     """, unsafe_allow_html=True)
