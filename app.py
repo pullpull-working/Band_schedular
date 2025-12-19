@@ -112,7 +112,7 @@ def parse_schedule_text(text):
 # ==========================================
 
 def main():
-    st.set_page_config(page_title="バンド日調用アプリ", layout="wide", page_icon="🎙")
+    st.set_page_config(page_title="バンド日程調整", layout="wide", page_icon="🎸")
     
     st.markdown("""
         <style>
@@ -201,13 +201,10 @@ def main():
             st.subheader("日程のリセット")
             st.caption("※ 注意：日程だけでなく、メンバーが入力した回答データも全て消去されます。")
             if st.button("全日程・全回答を削除してリセットする", type="primary"):
-                # 1. Config (日程) を空にする
+                # ConfigとResponsesを両方空にする
                 empty_config = pd.DataFrame(columns=EXPECTED_COLS)
-                
-                # 2. Responses (回答) も空にする
                 empty_responses = pd.DataFrame(columns=["user_id", "slot_id", "status"])
                 
-                # 両方保存する
                 success_config = save_data(conn, "Config", empty_config)
                 success_res = save_data(conn, "Responses", empty_responses)
                 
@@ -254,82 +251,64 @@ def main():
 
                     if mode == "📝 予定を入れる":
                         st.subheader("📝 予定の入力")
-                        st.caption("表の「回答」列をクリックして変更し、下のボタンで保存してください。")
                         
                         if not slots:
                             st.info("現在、調整中の日程はありません。")
                         else:
-                            input_data = []
-                            for slot in slots:
-                                current_val = "？"
-                                if not df_responses.empty and {'user_id','slot_id','status'}.issubset(df_responses.columns):
-                                    my_res = df_responses[
-                                        (df_responses['user_id'] == str(current_user['user_id'])) & 
-                                        (df_responses['slot_id'] == str(slot['id']))
-                                    ]
-                                    if not my_res.empty:
-                                        val = my_res.iloc[0]['status']
-                                        if val in STATUS_OPTIONS:
-                                            current_val = val
+                            # フォームを使ってラジオボタンで入力
+                            with st.form("schedule_form"):
+                                input_data = []
+                                for slot in slots:
+                                    default_idx = 2 # 「？」をデフォルトに
+                                    
+                                    # 過去の回答があればそれを初期値にする
+                                    if not df_responses.empty and {'user_id','slot_id','status'}.issubset(df_responses.columns):
+                                        prev = df_responses[
+                                            (df_responses['user_id'] == str(current_user['user_id'])) & 
+                                            (df_responses['slot_id'] == str(slot['id']))
+                                        ]
+                                        if not prev.empty:
+                                            try:
+                                                val = prev.iloc[0]['status']
+                                                default_idx = STATUS_OPTIONS.index(val)
+                                            except: pass
+                                    
+                                    # ラジオボタン表示
+                                    val = st.radio(f"**{slot['name']}**", STATUS_OPTIONS, index=default_idx, horizontal=True, key=slot['id'])
+                                    input_data.append({"user_id": str(current_user['user_id']), "slot_id": str(slot['id']), "status": val})
                                 
-                                input_data.append({
-                                    "slot_id": slot['id'], 
-                                    "日程": slot['name'],
-                                    "回答": current_val
-                                })
-                            
-                            df_input = pd.DataFrame(input_data)
+                                # 保存ボタン
+                                if st.form_submit_button("回答を保存する", type="primary"):
+                                    new_input_df = pd.DataFrame(input_data)
+                                    
+                                    other_df = pd.DataFrame(columns=["user_id", "slot_id", "status"])
+                                    if not df_responses.empty and {'user_id','slot_id','status'}.issubset(df_responses.columns):
+                                         clean_uid = str(current_user['user_id'])
+                                         mask = df_responses['user_id'] != clean_uid
+                                         other_df = df_responses[mask]
 
-                            edited_df = st.data_editor(
-                                df_input,
-                                column_config={
-                                    "slot_id": None,
-                                    "日程": st.column_config.TextColumn("日程", disabled=True),
-                                    "回答": st.column_config.SelectboxColumn(
-                                        "回答", options=STATUS_OPTIONS, required=True, width="medium"
-                                    )
-                                },
-                                hide_index=True,
-                                use_container_width=True,
-                                key="member_schedule_editor"
-                            )
+                                    final_res = pd.concat([other_df, new_input_df], ignore_index=True)
+                                    
+                                    if save_data(conn, "Responses", final_res):
+                                        st.toast("回答を更新しました！")
+                                        time.sleep(0.5)
+                                        st.rerun()
 
-                            if st.button("回答を保存する", type="primary"):
-                                new_rows = []
-                                for _, row in edited_df.iterrows():
-                                    new_rows.append({
-                                        "user_id": str(current_user['user_id']),
-                                        "slot_id": str(row['slot_id']),
-                                        "status": row['回答']
-                                    })
-                                new_input_df = pd.DataFrame(new_rows)
-
-                                other_df = pd.DataFrame(columns=["user_id", "slot_id", "status"])
-                                if not df_responses.empty and {'user_id','slot_id','status'}.issubset(df_responses.columns):
-                                     clean_uid = str(current_user['user_id'])
-                                     mask = df_responses['user_id'] != clean_uid
-                                     other_df = df_responses[mask]
-
-                                final_res = pd.concat([other_df, new_input_df], ignore_index=True)
-                                
-                                if save_data(conn, "Responses", final_res):
-                                    st.toast("回答を更新しました！")
-                                    time.sleep(0.5)
-                                    st.rerun()
-
+                            # 削除ボタン（隠さずに表示）
                             st.write("")
-                            with st.expander("回答をリセットする"):
-                                if st.button("自分の回答を全て削除する"):
-                                    if not df_responses.empty and 'user_id' in df_responses.columns:
-                                        clean_uid = str(current_user['user_id'])
-                                        new_df = df_responses[df_responses['user_id'] != clean_uid]
-                                        
-                                        if save_data(conn, "Responses", new_df):
-                                            st.warning("回答を全て削除しました。")
-                                            time.sleep(1.0)
-                                            st.rerun()
-                                    else:
-                                        st.warning("削除するデータがありません。")
+                            st.write("---")
+                            st.caption("※ 間違えて入力した場合など、最初からやり直したい時はこちら")
+                            if st.button("自分の回答を全て削除する"):
+                                if not df_responses.empty and 'user_id' in df_responses.columns:
+                                    clean_uid = str(current_user['user_id'])
+                                    new_df = df_responses[df_responses['user_id'] != clean_uid]
+                                    
+                                    if save_data(conn, "Responses", new_df):
+                                        st.warning("回答を全て削除（リセット）しました。")
+                                        time.sleep(1.0)
+                                        st.rerun()
+                                else:
+                                    st.warning("削除するデータがありません。")
 
                     elif mode == "🔍 バンドの予定を見る":
                         st.subheader("🔍 確認")
