@@ -116,9 +116,22 @@ def main():
     
     st.markdown("""
         <style>
+        /* 右下のフッター（Made with Streamlit）を消す */
         footer {visibility: hidden;}
+        
+        /* 右上の「Deploy」ボタンやGitHubアイコンを消す */
+        .stDeployButton {display:none;}
+        
+        /* もし右上のハンバーガーメニュー（三本線）も消したければ以下を有効化 */
+        #MainMenu {visibility: hidden;}
+        
+        /* その他UI調整 */
         .stRadio > label {font-size: 1.2rem; font-weight:bold;}
         .stButton > button {width: 100%; height: 3em; font-weight:bold;}
+        div[data-testid="stRadio"] {
+            padding-bottom: 10px;
+            border-bottom: 1px solid #f0f2f6;
+        }
         </style>
     """, unsafe_allow_html=True)
 
