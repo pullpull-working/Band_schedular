@@ -18,6 +18,11 @@ EXPECTED_COLS = ["type", "id", "name", "extra", "pass"]
 # ▼ 関数定義
 # ==========================================
 
+def is_quota_error(e):
+    """エラーがAPI制限(429)かどうかを判定する"""
+    msg = str(e).lower()
+    return "quota exceeded" in msg or "429" in msg or "resource_exhausted" in msg
+
 def clean_numeric_str(val):
     """数値のクリーニング"""
     s = str(val).strip()
@@ -28,17 +33,20 @@ def clean_numeric_str(val):
     return s
 
 def load_data(conn):
-    """データの読み込み"""
+    """データの読み込み（API制限対策済み）"""
     df_config = pd.DataFrame()
     df_responses = pd.DataFrame()
     df_members = pd.DataFrame()
 
+    # 各読み込みの間にsleepを入れて制限回避を試みる
     try:
         df_config = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Config", ttl=0)
         if not df_config.empty:
             df_config = df_config.fillna("").astype(str)
     except Exception:
         pass 
+    
+    time.sleep(1.0) 
 
     try:
         df_responses = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Responses", ttl=0)
@@ -48,6 +56,8 @@ def load_data(conn):
                     df_responses[col] = df_responses[col].apply(clean_numeric_str)
     except Exception:
         pass 
+    
+    time.sleep(1.0)
 
     try:
         df_members = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Members", ttl=0)
@@ -56,24 +66,35 @@ def load_data(conn):
                 if col in df_members.columns:
                     df_members[col] = df_members[col].apply(clean_numeric_str)
     except Exception as e:
-        st.error(f"メンバー表の読み込みに失敗しました: {e}")
+        # ★ここを修正: エラー内容によって表示を変える
+        if is_quota_error(e):
+            st.warning("現在アクセスが込み合っています。しばらく待ってから再読み込みしてください。")
+        else:
+            st.error(f"メンバー表の読み込みに失敗しました: {e}")
 
     return df_config.copy(), df_responses.copy(), df_members.copy()
 
 def save_data(conn, sheet_name, df):
-    """データの保存（頑丈版）"""
+    """データの保存（API制限時は優しいメッセージを表示）"""
     try:
         df_clean = df.fillna("").astype(str)
         try:
             conn.update(worksheet=sheet_name, data=df_clean)
+            time.sleep(1.0) 
             return True
         except Exception:
             try:
                 conn.update(spreadsheet=SPREADSHEET_URL, worksheet=sheet_name, data=df_clean)
+                time.sleep(1.0) 
                 return True
             except Exception as inner_e:
                 raise inner_e
     except Exception as e:
+        # ★ここを修正: API制限エラーの場合は優しいメッセージにする
+        if is_quota_error(e):
+            st.warning("込み合っています。しばらく待ってから試してね。")
+            return False
+            
         err_msg = str(e)
         if "not found" in err_msg.lower() or "見つかりません" in err_msg:
             st.error(f"エラー: シート '{sheet_name}' が見つかりません。")
@@ -82,14 +103,11 @@ def save_data(conn, sheet_name, df):
         return False
 
 def parse_schedule_text(text):
-    """単純な行ごとの解析（補完なし）"""
+    """単純な行ごとの解析"""
     if not text:
         return []
-
-    # 単純に改行で区切り、前後の空白を除去し、空行以外をリストにする
     lines = text.splitlines()
     candidates = [line.strip() for line in lines if line.strip()]
-    
     return candidates
 
 # ==========================================
@@ -101,13 +119,8 @@ def main():
     
     st.markdown("""
         <style>
-        /* 右下のフッター（Made with Streamlit）を消す */
         footer {visibility: hidden;}
-        
-        /* 右上の「Deploy」ボタンやGitHubアイコンを消す */
         .stDeployButton {display:none;}
-        
-        /* その他UI調整 */
         .stRadio > label {font-size: 1.2rem; font-weight:bold;}
         .stButton > button {width: 100%; height: 3em; font-weight:bold;}
         div[data-testid="stRadio"] {
@@ -161,14 +174,20 @@ def main():
                 placeholder_text = """12/13(土) 10:00-11:00
 11:00-12:00
 12/14(日) 13:00-14:00"""
-                candidate_text = st.text_area("テキスト貼り付けで追加（1行ずつそのまま追加されます）", height=150, placeholder=placeholder_text)
+                candidate_text = st.text_area("テキスト貼り付けで追加", height=150, placeholder=placeholder_text)
                 submit_slot = st.form_submit_button("追加する")
             
             if submit_slot:
-                # ★修正: ここでも念のため最新のConfigを読み直してから追加する
-                fresh_config, _, _ = load_data(conn)
+                fresh_config = pd.DataFrame()
+                try:
+                    fresh_config = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Config", ttl=0)
+                    if not fresh_config.empty:
+                        fresh_config = fresh_config.fillna("").astype(str)
+                except:
+                    pass
+
                 if fresh_config.empty and not df_config.empty:
-                    fresh_config = df_config.copy() # 読み込み失敗時はキャッシュを使う
+                    fresh_config = df_config.copy() 
 
                 preview_list = parse_schedule_text(candidate_text)
                 if not preview_list:
@@ -202,6 +221,7 @@ def main():
                 empty_responses = pd.DataFrame(columns=["user_id", "slot_id", "status"])
                 
                 success_config = save_data(conn, "Config", empty_config)
+                time.sleep(1.0)
                 success_res = save_data(conn, "Responses", empty_responses)
                 
                 if success_config and success_res:
@@ -209,14 +229,16 @@ def main():
                     time.sleep(1.0)
                     st.rerun()
                 else:
-                    st.error("削除処理の一部に失敗しました")
+                    # save_data側でエラー表示済みなのでここではシンプルに
+                    pass
 
     # ------------------------------------------
     # 👤 メンバーモード
     # ------------------------------------------
     else: 
         if df_members.empty:
-            st.warning("メンバーデータを読み込めませんでした。再読み込みしてください。")
+            # ここもエラーではなくWarningにしておく
+            st.warning("データの読み込みに時間がかかっています。少し待ってからリロードしてください。")
         else:
             users = df_members.to_dict('records')
             user_map = {u['name']: u for u in users if u.get('name')}
@@ -271,23 +293,25 @@ def main():
                                 
                                 # 保存ボタン
                                 if st.form_submit_button("回答を保存する", type="primary"):
-                                    # ★重要修正: ボタンが押された瞬間に、最新の回答データをサーバーから取得する！
-                                    _, fresh_responses, _ = load_data(conn)
+                                    fresh_responses = pd.DataFrame()
+                                    try:
+                                        fresh_responses = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Responses", ttl=0)
+                                        if not fresh_responses.empty:
+                                             for col in ['user_id', 'slot_id']:
+                                                if col in fresh_responses.columns:
+                                                    fresh_responses[col] = fresh_responses[col].apply(clean_numeric_str)
+                                    except: pass
                                     
-                                    # もし取得失敗したら、古いデータ(df_responses)を代用するが、基本は最新を使う
                                     if fresh_responses.empty and not df_responses.empty:
                                         fresh_responses = df_responses.copy()
-                                    elif fresh_responses.empty: # 本当に初回など
+                                    elif fresh_responses.empty:
                                         fresh_responses = pd.DataFrame(columns=["user_id", "slot_id", "status"])
 
                                     new_input_df = pd.DataFrame(input_data)
-                                    
                                     other_df = pd.DataFrame(columns=["user_id", "slot_id", "status"])
                                     
-                                    # 最新データ(fresh_responses)を使ってマージ作業をする
                                     if not fresh_responses.empty and {'user_id','slot_id','status'}.issubset(fresh_responses.columns):
                                          clean_uid = str(current_user['user_id'])
-                                         # 自分以外のデータを「最新の状態」から抽出して残す
                                          mask = fresh_responses['user_id'] != clean_uid
                                          other_df = fresh_responses[mask]
 
@@ -295,19 +319,24 @@ def main():
                                     
                                     if save_data(conn, "Responses", final_res):
                                         st.toast("回答を更新しました！")
-                                        time.sleep(0.5)
+                                        time.sleep(1.0)
                                         st.rerun()
 
                             st.write("")
                             st.write("---")
                             st.caption("※ 間違えて入力した場合など、最初からやり直したい時はこちら")
                             if st.button("自分の回答を全て削除する"):
-                                # ★削除の時も最新データを取得してから消す
-                                _, fresh_responses, _ = load_data(conn)
+                                fresh_responses = pd.DataFrame()
+                                try:
+                                    fresh_responses = conn.read(spreadsheet=SPREADSHEET_URL, worksheet="Responses", ttl=0)
+                                    if not fresh_responses.empty:
+                                         for col in ['user_id', 'slot_id']:
+                                            if col in fresh_responses.columns:
+                                                fresh_responses[col] = fresh_responses[col].apply(clean_numeric_str)
+                                except: pass
                                 
                                 if not fresh_responses.empty and 'user_id' in fresh_responses.columns:
                                     clean_uid = str(current_user['user_id'])
-                                    # 最新データから自分を除外
                                     new_df = fresh_responses[fresh_responses['user_id'] != clean_uid]
                                     
                                     if save_data(conn, "Responses", new_df):
